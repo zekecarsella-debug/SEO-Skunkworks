@@ -204,6 +204,12 @@ runForm.addEventListener("submit", async event => {
 function runSummary(payload) {
   const excluded = payload.results.filter(row => row.Status === "Excluded");
   const included = payload.results.filter(row => row.Status !== "Excluded");
+  if (payload.tool === "brokenLinks") {
+    const replacements = payload.results.filter(row => row["Remove/Replace"] === "Replace").length;
+    const removals = payload.results.filter(row => row["Remove/Replace"] === "Remove").length;
+    const reviews = payload.results.filter(row => /^check source/i.test(row["Remove/Replace"] || "")).length;
+    return `Generated ${payload.results.length.toLocaleString()} broken-link rows: ${replacements} replacements, ${removals} removals, ${reviews} file/image review items.`;
+  }
   const preview = included.slice(0, payload.config.previewCount || 0)
     .map(row => `${row["Source URL"] || row.Source || row.URL} -> ${row["Redirect URL"] || row["Replacement URL"] || row["Preferred Page"] || ""}`)
     .filter(Boolean);

@@ -25,7 +25,8 @@ const toolConfigs = {
     prompt:
       "Replace broken internal or external destinations with close sitemap alternatives. Remove links when the best match is generic, homepage-only, or low confidence.",
     requiredFiles: ["Screaming Frog 4xx inlinks CSV/XLSX", "XML sitemap"],
-    exportColumns: ["Source URL", "Destination", "Anchor", "Remove/Replace", "Replacement URL", "Status", "Notes"]
+    exportColumns: ["Source URL", "Destination", "Anchor", "Remove/Replace", "Replacement URL", "Status", "Notes"],
+    previewCount: 3
   },
   redirects404: {
     title: "404 Redirect Mapper",
@@ -609,26 +610,92 @@ function confidence(score) {
 }
 
 function runBrokenLinks(rows, sitemap, client) {
+  const decisions = new Map();
   return rows.map(row => {
-    const source = value(row, ["Source", "Source URL", "From", "Address"]);
-    const destination = value(row, ["Destination", "Destination URL", "To", "Link URL"]);
-    const anchor = value(row, ["Anchor", "Anchor Text"]);
-    const match = bestMatch(destination, sitemap, client.homepageUrl);
-    const remove = match.score < 0.18 || isHomepage(match.url, client.homepageUrl);
+    const source = value(row, ["Source", "Source URL", "From", "Address"]) || firstCell(row, 0);
+    const destination = value(row, ["Destination", "Destination URL", "To", "Link URL"]) || firstCell(row, 1);
+    const anchor = value(row, ["Anchor", "Anchor Text"]) || firstCell(row, 2);
+    const key = normalizeUrl(destination);
+    const decision = decisions.get(key) || brokenLinkDecision(destination, anchor, source, sitemap, client);
+    decisions.set(key, decision);
     return {
       "Source URL": source,
       Destination: destination,
       Anchor: anchor,
-      "Remove/Replace": remove ? "Remove" : "Replace",
-      "Replacement URL": remove ? "" : match.url,
+      "Remove/Replace": decision.action,
+      "Replacement URL": decision.replacement,
       Status: "Pending",
-      Notes: "",
-      Confidence: confidence(match.score),
-      Reason: remove
-        ? "No close sitemap replacement found; avoid generic homepage replacement."
-        : `Closest sitemap match by URL tokens (${Math.round(match.score * 100)}%).`
+      Notes: decision.notes,
+      Confidence: decision.confidence,
+      Reason: decision.reason
     };
   });
+}
+
+function firstCell(row, index) {
+  return String(Object.values(row || {})[index] || "").trim();
+}
+
+function brokenLinkDecision(destination, anchor, source, sitemap, client) {
+  if (isFileOrImageUrl(destination)) {
+    return {
+      action: "Check Source Page for Broken Images",
+      replacement: "",
+      notes: "Check Source Page for Broken Images",
+      confidence: "Review",
+      reason: "Broken destination is an image or file URL; do not guess a redirect."
+    };
+  }
+  const internal = isInternalUrl(destination, client, sitemap);
+  const match = internal ? bestMatch(destination, sitemap, client.homepageUrl) : bestExternalReplacement(destination, anchor, source, sitemap, client);
+  const generic = isGenericReplacement(match.url, client.homepageUrl);
+  const weak = match.score < (internal ? 0.22 : 0.42);
+  const action = weak || generic ? "Remove" : "Replace";
+  return {
+    action,
+    replacement: action === "Replace" ? match.url : "",
+    notes: "",
+    confidence: confidence(match.score),
+    reason: action === "Replace"
+      ? `${internal ? "Internal" : "External"} broken link matched to a relevant replacement (${Math.round(match.score * 100)}%).`
+      : `${internal ? "Internal" : "External"} broken link has no close non-generic replacement; remove rather than forcing a weak match.`
+  };
+}
+
+function bestExternalReplacement(destination, anchor, source, sitemap, client) {
+  const query = `${destination} ${anchor} ${source}`;
+  const match = bestMatch(query, sitemap, client.homepageUrl);
+  return match.score >= 0.42 ? match : { url: "", score: match.score };
+}
+
+function isInternalUrl(input, client, sitemap) {
+  const origin = urlOrigin(input);
+  const clientOrigin = urlOrigin(client.homepageUrl || client.domain || "");
+  if (origin && clientOrigin && origin === clientOrigin) return true;
+  return sitemap.some(url => urlOrigin(url) && origin && urlOrigin(url) === origin);
+}
+
+function isGenericReplacement(url, homepage) {
+  if (!url) return true;
+  if (isHomepage(url, homepage)) return true;
+  const parts = canonicalPath(url).split("/").filter(Boolean);
+  return parts.length <= 1 && /^(category|categories|collection|collections|products|shop|blog|brands|services)$/i.test(parts[0] || "");
+}
+
+function isFileOrImageUrl(input) {
+  return /\.(jpe?g|png|gif|webp|svg|pdf|docx?|xlsx?|pptx?|zip)([?#]|$)/i.test(String(input || ""));
+}
+
+function formatBrokenLinkRowsForExport(rows) {
+  return rows.map(row => ({
+    "Source URL": row["Source URL"],
+    Destination: row.Destination,
+    Anchor: row.Anchor,
+    "Remove/Replace": row["Remove/Replace"],
+    "Replacement URL": row["Replacement URL"],
+    Status: row.Status,
+    Notes: row.Notes
+  }));
 }
 
 function isHomepage(url, homepage) {
@@ -920,6 +987,7 @@ async function handleRun(req, res) {
       runAltText(rows, sitemap, client);
     const exportRows =
       tool === "redirects404" ? formatRedirectRowsForPlatform(results, client.cmsPlatform) :
+      tool === "brokenLinks" ? formatBrokenLinkRowsForExport(results) :
       tool === "altText" ? formatAltTextRowsForExport(results) :
       results;
     sendJson(res, 200, {
@@ -1020,6 +1088,7 @@ module.exports = {
   parseSitemapUpload,
   extractUrlsFromRows,
   runBrokenLinks,
+  formatBrokenLinkRowsForExport,
   runRedirects,
   formatRedirectRowsForPlatform,
   runKeywordResearch,

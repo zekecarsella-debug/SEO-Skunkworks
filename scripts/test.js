@@ -6,6 +6,7 @@ const {
   parseSitemap,
   extractUrlsFromRows,
   runBrokenLinks,
+  formatBrokenLinkRowsForExport,
   runRedirects,
   formatRedirectRowsForPlatform,
   runKeywordResearch,
@@ -133,13 +134,25 @@ test("bestMatch strips simple pagination paths before fuzzy scoring", () => {
 test("broken links produce replace and remove decisions", () => {
   const rows = [
     { "Source URL": "https://example.com/a", Destination: "https://example.com/old/cement-siding.html", Anchor: "cement siding" },
-    { "Source URL": "https://example.com/b", Destination: "https://example.com/random-legacy-event", Anchor: "event" }
+    { "Source URL": "https://example.com/b", Destination: "https://example.com/random-legacy-event", Anchor: "event" },
+    { "Source URL": "https://example.com/c", Destination: "https://example.com/uploads/broken-image.jpg", Anchor: "image" }
   ];
   const results = runBrokenLinks(rows, sitemap, client);
   assert.equal(results[0]["Remove/Replace"], "Replace");
   assert.equal(results[0]["Replacement URL"], "https://example.com/products/cement-siding/");
   assert.equal(results[1]["Remove/Replace"], "Remove");
   assert.equal(results[1].Status, "Pending");
+  assert.equal(results[2]["Remove/Replace"], "Check Source Page for Broken Images");
+  assert.equal(results[2].Notes, "Check Source Page for Broken Images");
+  assert.deepEqual(Object.keys(formatBrokenLinkRowsForExport(results)[0]), [
+    "Source URL",
+    "Destination",
+    "Anchor",
+    "Remove/Replace",
+    "Replacement URL",
+    "Status",
+    "Notes"
+  ]);
 });
 
 test("404 redirects use homepage fallback when needed", () => {
