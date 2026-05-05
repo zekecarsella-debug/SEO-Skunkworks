@@ -210,10 +210,24 @@ test("keyword research classifies and sorts opportunities", () => {
     { Keyword: "cement siding", Position: "11", Volume: "900", URL: "https://example.com/products/cement-siding/" },
     { Keyword: "how long does industrial siding last", Position: "35", Volume: "120" }
   ];
-  const results = runKeywordResearch(rows, sitemap, client);
+  const results = runKeywordResearch(rows, sitemap, client, "initial", []);
   assert.equal(results[0].Keyword, "cement siding");
   assert.equal(results[0].Type, "Primary");
   assert.equal(results[1].Type, "Secondary");
+});
+
+test("additional keyword research separates existing and new GSC queries", () => {
+  const gsc = [
+    { Query: "cement siding", Clicks: "1", Impressions: "300", CTR: "0.3%", Position: "14", Page: "https://example.com/products/cement-siding/" },
+    { Query: "new industrial siding idea", Clicks: "0", Impressions: "120", CTR: "0%", Position: "24", Page: "https://example.com/blog/siding/" }
+  ];
+  const template = [
+    { Keyword: "cement siding", Category: "Cement Siding", "Preferred Page": "https://example.com/products/cement-siding/" }
+  ];
+  const results = runKeywordResearch(gsc, sitemap, client, "additional", template);
+  assert.equal(results[0].Sheet, "Expansion Needs Improvement");
+  assert.equal(results[1].Sheet, "New Keywords to Add");
+  assert.equal(results[0]["Current Expansion Status"], "Already in Keyword Expansion");
 });
 
 test("alt text deduplicates image URLs", () => {

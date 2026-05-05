@@ -44,6 +44,13 @@
 
           <form id="runForm" class="run-form">
             <div class="field-grid">
+              <label id="workflowField">
+                Workflow
+                <select name="keywordWorkflow">
+                  <option value="initial">Initial Keyword Research</option>
+                  <option value="additional">Additional Keyword Research</option>
+                </select>
+              </label>
               <label>
                 Client Name
                 <input name="clientName" placeholder="National Positions client" required />
@@ -80,6 +87,11 @@
                 <span>XML Sitemap</span>
                 <input name="sitemapFile" type="file" accept=".xml,.csv,.xlsx" />
                 <small>Required for URL matching tools.</small>
+              </label>
+              <label class="upload-box" id="templateBox">
+                <span>Campaign Strategy Template</span>
+                <input name="templateFile" type="file" accept=".xlsx,.csv" />
+                <small>Used for Keyword Expansion comparisons.</small>
               </label>
             </div>
 

@@ -47,9 +47,13 @@ const toolConfigs = {
   keywordResearch: {
     title: "Keyword Research",
     prompt:
-      "Prioritize Semrush Keyword Gap opportunities for campaign keyword expansion and classify primary versus long-tail secondary keywords.",
-    requiredFiles: ["Semrush Keyword Gap CSV/XLSX"],
-    exportColumns: ["Keyword", "Type", "Category", "Position", "Volume", "Ranking URL", "Preferred Page", "Confidence", "Reason"]
+      "Create keyword expansion recommendations from Semrush Keyword Gap or GSC query performance exports.",
+    requiredFiles: ["Semrush Keyword Gap or GSC CSV/XLSX", "Campaign Strategy Template"],
+    exportColumns: ["Keyword", "Type", "Category", "Position", "Volume", "Ranking URL", "Preferred Page", "Confidence", "Reason"],
+    workflows: {
+      initial: "Initial Keyword Research",
+      additional: "Additional Keyword Research"
+    }
   },
   altText: {
     title: "Image Missing Alt Text",
@@ -74,8 +78,8 @@ function sendCsv(res, filename, columns, rows) {
   res.end(csv);
 }
 
-function sendExcelHtml(res, filename, columns, rows) {
-  const html = excelWorkbookHtml(columns, rows);
+function sendExcelHtml(res, filename, columns, rows, sheets = null) {
+  const html = sheets ? excelMultiSheetHtml(sheets) : excelWorkbookHtml(columns, rows);
   res.writeHead(200, {
     "Content-Type": "application/vnd.ms-excel; charset=utf-8",
     "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`
@@ -88,6 +92,15 @@ function excelWorkbookHtml(columns, rows) {
     `<tr>${columns.map(column => `<th>${escapeHtmlText(column)}</th>`).join("")}</tr>`,
     ...rows.map(row => `<tr>${columns.map(column => `<td>${escapeHtmlText(row[column] ?? "")}</td>`).join("")}</tr>`)
   ].join("")}</table></body></html>`;
+}
+
+function excelMultiSheetHtml(sheets) {
+  return `<!doctype html><html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8" />` +
+    `<xml><x:ExcelWorkbook><x:ExcelWorksheets>${sheets.map(sheet => `<x:ExcelWorksheet><x:Name>${escapeHtmlText(sheet.name)}</x:Name><x:WorksheetOptions /></x:ExcelWorksheet>`).join("")}</x:ExcelWorksheets></x:ExcelWorkbook></xml>` +
+    `</head><body>${sheets.map(sheet => `<h2>${escapeHtmlText(sheet.name)}</h2><table>${[
+      `<tr>${sheet.columns.map(column => `<th>${escapeHtmlText(column)}</th>`).join("")}</tr>`,
+      ...sheet.rows.map(row => `<tr>${sheet.columns.map(column => `<td>${escapeHtmlText(row[column] ?? "")}</td>`).join("")}</tr>`)
+    ].join("")}</table>`).join("<br />")}</body></html>`;
 }
 
 function escapeHtmlText(value) {
@@ -816,42 +829,208 @@ function pathForPlatform(input) {
   }
 }
 
-function runKeywordResearch(rows, _sitemap, client) {
+function runKeywordResearch(rows, _sitemap, client, workflow = "initial", templateRows = []) {
+  return workflow === "additional"
+    ? runAdditionalKeywordResearch(rows, templateRows, client)
+    : runInitialKeywordResearch(rows, templateRows, client);
+}
+
+function runInitialKeywordResearch(rows, templateRows, client) {
+  const expansionPages = preferredPagesFromTemplate(templateRows);
   return rows
     .map(row => {
       const keyword = value(row, ["Keyword", "Search Term", "Query"]);
-      const position = Number(value(row, ["Position", "Pos.", "Organic Position", "Ranking"]) || 999);
-      const volume = Number(String(value(row, ["Volume", "Search Volume", "Avg. Search Volume"]) || "0").replace(/,/g, ""));
+      const position = parseNumber(value(row, ["Position", "Pos.", "Organic Position", "Ranking", "Client Position"]));
+      const volume = parseNumber(value(row, ["Volume", "Search Volume", "Avg. Search Volume", "Search Volume (Avg)"]));
+      const kd = parseNumber(value(row, ["KD", "Keyword Difficulty", "Competition", "Comp."]));
       const rankingUrl = value(row, ["URL", "Ranking URL", "Landing Page", "Current URL"]);
-      const type = /^(how|what|why|when|where|can|does|do|is|are)\b/i.test(keyword) || keyword.split(/\s+/).length >= 5
-        ? "Secondary"
-        : "Primary";
+      const intent = value(row, ["Intent", "Search Intent"]);
+      const type = classifyKeyword(keyword, intent);
       const category = categoryFromKeyword(keyword, client.specialty);
-      const preferredPage = rankingUrl || suggestPage(keyword, client.domain, client.homepageUrl);
-      const opportunity = (volume || 1) / Math.max(1, position || 50);
+      const preferredPage = rankingUrl || bestPreferredPage(keyword, expansionPages) || suggestPage(keyword, client.domain, client.homepageUrl);
+      const opportunity = keywordOpportunityScore(keyword, volume, position, kd, client);
       return {
         Keyword: keyword,
         Type: type,
         Category: category,
-        Position: Number.isFinite(position) ? position : "",
-        Volume: volume || "",
+        "Google Search Ranking": Number.isFinite(position) ? position : "",
+        "Average Search Volume": volume || "",
         "Ranking URL": rankingUrl,
         "Preferred Page": preferredPage,
+        Intent: intent,
+        KD: Number.isFinite(kd) ? kd : "",
+        Priority: priorityFromScore(opportunity),
         Confidence: keyword ? "Medium" : "Low",
-        Reason: type === "Secondary" ? "Question or long-tail query." : "Short head term suitable for primary targeting.",
+        Reason: keyword ? "Prioritized by business relevance, volume, ranking opportunity, and page fit." : "Missing keyword.",
         _opportunity: opportunity
       };
     })
-    .filter(row => row.Keyword)
+    .filter(row => row.Keyword && !isLikelyIrrelevantKeyword(row.Keyword, client))
     .sort((a, b) => b._opportunity - a._opportunity)
     .slice(0, 400)
     .map(({ _opportunity, ...row }) => row);
+}
+
+function runAdditionalKeywordResearch(rows, templateRows, client) {
+  const expansion = expansionKeywordMap(templateRows);
+  return rows.map(row => {
+    const keyword = value(row, ["Query", "Keyword", "Search Term"]);
+    const clicks = parseNumber(value(row, ["Clicks"]));
+    const impressions = parseNumber(value(row, ["Impressions"]));
+    const ctr = value(row, ["CTR", "Click Through Rate"]);
+    const position = parseNumber(value(row, ["Position", "Average Position", "Avg. Position"]));
+    const page = value(row, ["Page", "URL", "Landing Page"]);
+    const existing = expansion.get(normalizeKeyword(keyword));
+    const category = existing?.category || categoryFromKeyword(keyword, client.specialty);
+    const preferredPage = existing?.preferredPage || page || suggestPage(keyword, client.domain, client.homepageUrl);
+    const issue = keywordIssue(clicks, impressions, ctr, position, Boolean(existing));
+    const sheet = existing
+      ? issue === "Strong current performer" ? "Improved Keywords" : "Expansion Needs Improvement"
+      : "New Keywords to Add";
+    return {
+      Sheet: sheet,
+      "Keyword/Query": keyword,
+      "Current Expansion Status": existing ? "Already in Keyword Expansion" : "Not in Keyword Expansion",
+      Clicks: Number.isFinite(clicks) ? clicks : "",
+      Impressions: Number.isFinite(impressions) ? impressions : "",
+      CTR: ctr,
+      "Average Position": Number.isFinite(position) ? position : "",
+      "Ranking Page / GSC Page": page,
+      "Matching Keyword Expansion Page": existing?.preferredPage || "",
+      "Recommended Preferred Page": preferredPage,
+      Category: category,
+      "Issue / Opportunity": issue,
+      Priority: keywordPriority(clicks, impressions, position, Boolean(existing)),
+      "Recommended Action": recommendedKeywordAction(issue, Boolean(existing)),
+      Confidence: keyword ? "Medium" : "Low",
+      Reason: existing ? "Compared against uploaded Keyword Expansion rows." : "GSC query not found in uploaded Keyword Expansion rows."
+    };
+  }).filter(row => row["Keyword/Query"] && !isLikelyIrrelevantKeyword(row["Keyword/Query"], client));
+}
+
+function formatKeywordRowsForExport(rows, workflow = "initial") {
+  if (workflow === "additional") return rows.map(({ Sheet, Confidence, Reason, ...row }) => row);
+  return rows.map(row => ({
+    Keyword: row.Keyword,
+    Type: row.Type,
+    "Google Search Ranking": row["Google Search Ranking"],
+    "Average Search Volume": row["Average Search Volume"],
+    Category: row.Category,
+    "Ranking URL": row["Ranking URL"],
+    "Preferred Page": row["Preferred Page"],
+    Intent: row.Intent,
+    KD: row.KD,
+    Priority: row.Priority
+  }));
+}
+
+function keywordAdditionalSheets(rows) {
+  const columns = ["Keyword/Query", "Current Expansion Status", "Clicks", "Impressions", "CTR", "Average Position", "Ranking Page / GSC Page", "Matching Keyword Expansion Page", "Recommended Preferred Page", "Category", "Issue / Opportunity", "Priority", "Recommended Action"];
+  return ["Expansion Needs Improvement", "New Keywords to Add", "Improved Keywords"].map(name => ({
+    name,
+    columns,
+    rows: rows.filter(row => row.Sheet === name).map(row => {
+      const record = {};
+      columns.forEach(column => record[column] = row[column] || "");
+      return record;
+    })
+  }));
 }
 
 function categoryFromKeyword(keyword, specialty) {
   const words = tokens(keyword).filter(word => !["near", "best", "service", "services", "company", "companies"].includes(word));
   if (words.length >= 2) return titleCase(words.slice(0, 2).join(" "));
   return specialty ? titleCase(specialty) : "General";
+}
+
+function parseNumber(value) {
+  const cleaned = String(value || "").replace(/[%,$,\s]/g, "");
+  const number = Number(cleaned);
+  return Number.isFinite(number) ? number : NaN;
+}
+
+function classifyKeyword(keyword, intent = "") {
+  return /^(how|what|why|when|where|can|does|do|is|are)\b/i.test(keyword) ||
+    String(keyword || "").split(/\s+/).filter(Boolean).length >= 5 ||
+    /informational|question/i.test(intent)
+    ? "Secondary"
+    : "Primary";
+}
+
+function keywordOpportunityScore(keyword, volume, position, kd, client) {
+  const relevance = isLikelyIrrelevantKeyword(keyword, client) ? 0.1 : 1;
+  const volumeScore = Math.log10((Number.isFinite(volume) ? volume : 0) + 10);
+  const positionScore = Number.isFinite(position) ? Math.max(0.2, 1 / Math.max(position, 1) * 12) : 0.7;
+  const difficultyPenalty = Number.isFinite(kd) ? Math.max(0.35, 1 - kd / 140) : 0.8;
+  return relevance * volumeScore * positionScore * difficultyPenalty;
+}
+
+function priorityFromScore(score) {
+  if (score >= 2.6) return "High";
+  if (score >= 1.2) return "Medium";
+  return "Low";
+}
+
+function normalizeKeyword(keyword) {
+  return String(keyword || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function isLikelyIrrelevantKeyword(keyword, client) {
+  const text = normalizeKeyword(keyword);
+  if (!text) return true;
+  if (/\b(free|jobs?|salary|definition|meaning|template|pdf download)\b/.test(text)) return false;
+  const competitorish = /\b(amazon|walmart|lowes|home depot|facebook|youtube|reddit)\b/.test(text);
+  const clientName = normalizeKeyword(client.name);
+  return competitorish && clientName && !text.includes(clientName);
+}
+
+function expansionKeywordMap(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const keyword = value(row, ["Keyword", "Primary Keyword", "Secondary Keyword", "Query", "Search Term"]);
+    if (!keyword) continue;
+    map.set(normalizeKeyword(keyword), {
+      keyword,
+      preferredPage: value(row, ["Preferred Page", "Preferred URL", "Target Page", "URL", "Ranking URL"]),
+      category: value(row, ["Category", "Topic", "Keyword Category"])
+    });
+  }
+  return map;
+}
+
+function preferredPagesFromTemplate(rows) {
+  return [...new Set(rows.map(row => value(row, ["Preferred Page", "Preferred URL", "Target Page", "URL", "Ranking URL"])).filter(Boolean))];
+}
+
+function bestPreferredPage(keyword, pages) {
+  if (!pages.length) return "";
+  let best = { page: "", score: 0 };
+  for (const page of pages) {
+    const score = weightedTokenScore(keyword, page);
+    if (score > best.score) best = { page, score };
+  }
+  return best.score > 0.2 ? best.page : "";
+}
+
+function keywordIssue(clicks, impressions, ctr, position, exists) {
+  const ctrNumber = parseNumber(ctr);
+  if (exists && Number.isFinite(position) && position <= 10 && (clicks || 0) > 0) return "Strong current performer";
+  if ((impressions || 0) >= 100 && (clicks || 0) <= 3) return "High impressions with limited clicks";
+  if (Number.isFinite(position) && position > 10 && position <= 30) return "Ranking opportunity on page two or three";
+  if (Number.isFinite(ctrNumber) && ctrNumber < 1 && (impressions || 0) >= 50) return "Low CTR opportunity";
+  return exists ? "Monitor and optimize where relevant" : "Relevant query candidate";
+}
+
+function keywordPriority(clicks, impressions, position, exists) {
+  if ((impressions || 0) >= 250 && (!Number.isFinite(position) || position <= 30)) return "High";
+  if ((impressions || 0) >= 50 || (clicks || 0) >= 5 || exists) return "Medium";
+  return "Low";
+}
+
+function recommendedKeywordAction(issue, exists) {
+  if (issue === "Strong current performer") return "Keep and consider reinforcing content/internal links.";
+  if (exists) return "Optimize current mapped page for query intent and CTR.";
+  return "Review for addition to Keyword Expansion and map to the best-fit page.";
 }
 
 function suggestPage(keyword, domain, homepage) {
@@ -1024,23 +1203,29 @@ async function handleRun(req, res) {
       homepageUrl: fields.homepageUrl || "",
       cmsPlatform: fields.cmsPlatform || "other"
     };
-    const sheetFile = files.find(file => !/sitemap/i.test(file.field) && !/\.xml$/i.test(file.filename));
+    const sheetFile = files.find(file => !/sitemap|template/i.test(file.field) && !/\.xml$/i.test(file.filename));
     const sitemapFile = files.find(file => /sitemap/i.test(file.field) || /\.xml$/i.test(file.filename));
+    const templateFile = files.find(file => /template/i.test(file.field));
     if (!sheetFile) return sendJson(res, 400, { error: "Upload a CSV or XLSX export first." });
     const rows = await parseUpload(sheetFile, tool);
     const sitemap = sitemapFile ? await parseSitemapUpload(sitemapFile) : [];
+    const templateRows = templateFile ? await parseUpload(templateFile, "keywordResearch") : [];
     const validation = validate(tool, rows, sitemap);
     if (validation.issues.length) return sendJson(res, 422, { error: "Input validation failed.", validation });
     const results =
       tool === "brokenLinks" ? runBrokenLinks(rows, sitemap, client) :
       tool === "redirects404" ? runRedirects(rows, sitemap, client) :
-      tool === "keywordResearch" ? runKeywordResearch(rows, sitemap, client) :
+      tool === "keywordResearch" ? runKeywordResearch(rows, sitemap, client, fields.keywordWorkflow || "initial", templateRows) :
       runAltText(rows, sitemap, client);
     const exportRows =
       tool === "redirects404" ? formatRedirectRowsForPlatform(results, client.cmsPlatform) :
       tool === "brokenLinks" ? formatBrokenLinkRowsForExport(results) :
+      tool === "keywordResearch" ? formatKeywordRowsForExport(results, fields.keywordWorkflow || "initial") :
       tool === "altText" ? formatAltTextRowsForExport(results) :
       results;
+    const exportSheets = tool === "keywordResearch" && (fields.keywordWorkflow || "initial") === "additional"
+      ? keywordAdditionalSheets(results)
+      : null;
     sendJson(res, 200, {
       tool,
       config: toolConfigs[tool],
@@ -1049,6 +1234,8 @@ async function handleRun(req, res) {
       results,
       exportRows,
       exportColumns: Object.keys(exportRows[0] || {}),
+      exportSheets,
+      exportFormat: tool === "keywordResearch" ? "xls" : undefined,
       generatedAt: new Date().toISOString()
     });
   } catch (error) {
@@ -1111,7 +1298,8 @@ async function handleExport(req, res) {
     const format = payload.format === "xls" ? "xls" : "csv";
     const fallbackName = `seo-export-${new Date().toISOString().slice(0, 10)}.${format}`;
     const filename = safeDownloadName(payload.filename || fallbackName, format);
-    const content = format === "xls" ? excelWorkbookHtml(columns, rows) : toCsv(columns, rows);
+    const sheets = Array.isArray(payload.sheets) ? payload.sheets : null;
+    const content = format === "xls" && sheets ? excelMultiSheetHtml(sheets) : format === "xls" ? excelWorkbookHtml(columns, rows) : toCsv(columns, rows);
     ensureDataDirs();
     fs.writeFileSync(path.join(EXPORT_DIR, filename), content, "utf8");
     sendJson(res, 200, {

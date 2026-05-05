@@ -6,6 +6,7 @@ const state = {
   results: [],
   exportRows: [],
   exportColumns: [],
+  exportSheets: null,
   columns: [],
   history: JSON.parse(localStorage.getItem("seo-mvp-history") || "[]"),
   brand: JSON.parse(localStorage.getItem("seo-mvp-brand") || "null") || {
@@ -21,6 +22,8 @@ const toolTitle = document.querySelector("#toolTitle");
 const toolPrompt = document.querySelector("#toolPrompt");
 const runForm = document.querySelector("#runForm");
 const sitemapBox = document.querySelector("#sitemapBox");
+const templateBox = document.querySelector("#templateBox");
+const workflowField = document.querySelector("#workflowField");
 const mainHelp = document.querySelector("#mainHelp");
 const message = document.querySelector("#message");
 const resultsTable = document.querySelector("#resultsTable");
@@ -83,9 +86,12 @@ function selectTool(key) {
   mainHelp.textContent = config.requiredFiles[0];
   sitemapBox.style.display = key === "brokenLinks" || key === "redirects404" ? "grid" : "none";
   sitemapBox.querySelector("input").required = key === "brokenLinks" || key === "redirects404";
+  templateBox.style.display = key === "keywordResearch" ? "grid" : "none";
+  workflowField.style.display = key === "keywordResearch" ? "grid" : "none";
   state.results = [];
   state.exportRows = [];
   state.exportColumns = [];
+  state.exportSheets = null;
   state.columns = [];
   clearExportPanel();
   renderTable();
@@ -191,6 +197,7 @@ runForm.addEventListener("submit", async event => {
     state.results = payload.results;
     state.exportRows = payload.exportRows || payload.results;
     state.exportColumns = payload.exportColumns?.length ? payload.exportColumns : Object.keys(state.exportRows[0] || {});
+    state.exportSheets = payload.exportSheets || null;
     state.columns = Object.keys(state.results[0] || {});
     saveHistory(payload);
     renderTable();
@@ -330,18 +337,18 @@ exportButton.addEventListener("click", () => {
     setMessage("There are no exportable rows. Excluded rows are intentionally omitted.", true);
     return;
   }
-  const format = state.activeTool === "brokenLinks" ? "xls" : "csv";
+  const format = state.activeTool === "brokenLinks" || state.activeTool === "keywordResearch" ? "xls" : "csv";
   const filename = `${state.configs[state.activeTool].title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}.${format}`;
-  downloadExport(exportColumns, exportRows, filename, format);
+  downloadExport(exportColumns, exportRows, filename, format, state.exportSheets || null);
 });
 
-async function downloadExport(columns, rows, filename, format) {
+async function downloadExport(columns, rows, filename, format, sheets = null) {
   try {
     exportButton.disabled = true;
     const response = await fetch("/api/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ columns, rows, filename, format })
+      body: JSON.stringify({ columns, rows, filename, format, sheets })
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "The server could not prepare the export.");
@@ -400,7 +407,8 @@ function saveHistory(payload) {
     rows: payload.results.length,
     results: payload.results,
     exportRows: payload.exportRows,
-    exportColumns: payload.exportColumns
+    exportColumns: payload.exportColumns,
+    exportSheets: payload.exportSheets
   };
   state.history = [item, ...state.history].slice(0, 12);
   localStorage.setItem("seo-mvp-history", JSON.stringify(state.history));
@@ -428,6 +436,7 @@ historyList.addEventListener("click", event => {
   state.results = item.results;
   state.exportRows = item.exportRows || item.results;
   state.exportColumns = item.exportColumns || Object.keys(state.exportRows[0] || {});
+  state.exportSheets = item.exportSheets || null;
   state.columns = Object.keys(state.results[0] || {});
   renderTable();
   setMessage(`Loaded ${item.rows} saved recommendations for ${item.client}.`);
