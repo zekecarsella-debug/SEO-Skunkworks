@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>National Positions SEO Solutions</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Internal SEO Automation</p>
+        <h1 id="brandTitle">National Positions SEO Solutions</h1>
+      </div>
+      <button id="settingsButton" class="icon-button" title="Brand settings">Settings</button>
+    </header>
+
+    <main class="shell">
+      <section class="workspace">
+        <aside class="sidebar">
+          <section class="history-panel client-panel">
+            <h2>Clients</h2>
+            <select id="clientSelect">
+              <option value="">New or unsaved client</option>
+            </select>
+            <button id="clientDialogButton" type="button" class="secondary-button">Add / Edit Client</button>
+            <div id="clientSummary" class="client-summary"></div>
+          </section>
+          <div class="tool-list" id="toolList"></div>
+          <section class="history-panel">
+            <h2>Recent Runs</h2>
+            <div id="historyList" class="history-list"></div>
+          </section>
+        </aside>
+
+        <section class="tool-panel">
+          <div class="tool-heading">
+            <div>
+              <p id="toolPrompt" class="eyebrow"></p>
+              <h2 id="toolTitle">Choose a Tool</h2>
+            </div>
+            <span id="rowCount" class="status-pill">No run yet</span>
+          </div>
+
+          <form id="runForm" class="run-form">
+            <div class="field-grid">
+              <label>
+                Client Name
+                <input name="clientName" placeholder="National Positions client" required />
+              </label>
+              <label>
+                Domain
+                <input name="clientDomain" placeholder="example.com" />
+              </label>
+              <label>
+                Specialty
+                <input name="clientSpecialty" placeholder="roofing, industrial siding, dental implants..." />
+              </label>
+              <label>
+                CMS Platform
+                <select name="cmsPlatform">
+                  <option value="shopify">Shopify</option>
+                  <option value="wordpress">WordPress</option>
+                  <option value="other" selected>Other CMS</option>
+                </select>
+              </label>
+              <label>
+                Homepage URL
+                <input name="homepageUrl" placeholder="https://example.com/" />
+              </label>
+            </div>
+
+            <div class="upload-grid">
+              <label class="upload-box">
+                <span>Main Export</span>
+                <input name="mainFile" type="file" accept=".csv,.xlsx" required />
+                <small id="mainHelp">Upload the workflow export.</small>
+              </label>
+              <label class="upload-box" id="sitemapBox">
+                <span>XML Sitemap</span>
+                <input name="sitemapFile" type="file" accept=".xml,.csv,.xlsx" />
+                <small>Required for URL matching tools.</small>
+              </label>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="primary-button">Generate Recommendations</button>
+              <button type="button" id="exportButton" class="secondary-button" disabled>Export CSV</button>
+            </div>
+          </form>
+
+          <div id="message" class="message" hidden></div>
+          <section id="exportPanel" class="export-panel" hidden>
+            <div class="form-actions">
+              <a id="manualDownloadLink" class="secondary-button" download>Download CSV</a>
+              <button id="copyCsvButton" type="button" class="secondary-button">Copy CSV</button>
+            </div>
+            <textarea id="csvPreview" rows="6" readonly></textarea>
+          </section>
+
+          <section class="review-tools">
+            <input id="tableFilter" placeholder="Filter results..." />
+            <select id="confidenceFilter">
+              <option value="">All confidence levels</option>
+              <option>High</option>
+              <option>Medium</option>
+              <option>Low</option>
+            </select>
+            <select id="statusFilter">
+              <option value="">All statuses</option>
+              <option>Needs Review</option>
+              <option>Reviewed</option>
+              <option>Excluded</option>
+            </select>
+            <button id="markVisibleReviewed" type="button" class="secondary-button">Mark Visible Reviewed</button>
+          </section>
+
+          <section class="table-wrap">
+            <table id="resultsTable"></table>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="settingsDialog">
+      <form method="dialog" class="settings-form">
+        <h2>White-Label Settings</h2>
+        <label>
+          Agency Name
+          <input id="agencyName" />
+        </label>
+        <label>
+          Product Name
+          <input id="productName" />
+        </label>
+        <label>
+          Primary Color
+          <input id="primaryColor" type="color" />
+        </label>
+        <label>
+          Secondary Color
+          <input id="secondaryColor" type="color" />
+        </label>
+        <menu>
+          <button value="cancel" class="secondary-button">Cancel</button>
+          <button id="saveBrand" value="default" class="primary-button">Save</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="clientDialog">
+      <form id="clientForm" class="settings-form">
+        <h2>Client Profile</h2>
+        <input id="clientId" name="clientId" type="hidden" />
+        <div class="field-grid dialog-grid">
+          <label>
+            Client Name
+            <input name="name" id="profileName" required />
+          </label>
+          <label>
+            Domain
+            <input name="domain" id="profileDomain" placeholder="example.com" />
+          </label>
+          <label>
+            Specialty
+            <input name="specialty" id="profileSpecialty" placeholder="industrial siding" />
+          </label>
+          <label>
+            CMS Platform
+            <select name="cmsPlatform" id="profileCms">
+              <option value="shopify">Shopify</option>
+              <option value="wordpress">WordPress</option>
+              <option value="other">Other CMS</option>
+            </select>
+          </label>
+          <label>
+            Homepage URL
+            <input name="homepageUrl" id="profileHomepage" placeholder="https://example.com/" />
+          </label>
+        </div>
+        <label>
+          Website Link
+          <input name="websiteUrl" id="profileWebsite" placeholder="https://example.com/" />
+        </label>
+        <label>
+          Campaign Strategy Template
+          <input name="campaignStrategyUrl" id="profileCampaign" placeholder="Google Sheets URL" />
+        </label>
+        <label>
+          Shared Drive / Client Folder
+          <input name="driveFolderUrl" id="profileDrive" placeholder="Google Drive folder URL" />
+        </label>
+        <div class="field-grid dialog-grid">
+          <label>
+            Primary Brand Color
+            <input name="primaryColor" id="profilePrimary" type="color" value="#004b8d" />
+          </label>
+          <label>
+            Secondary Brand Color
+            <input name="secondaryColor" id="profileSecondary" type="color" value="#17a2a4" />
+          </label>
+        </div>
+        <label>
+          Logo / Brand Image
+          <input name="logoFile" id="profileLogo" type="file" accept=".png,.jpg,.jpeg,.webp,.svg" />
+        </label>
+        <label>
+          Helpful Files
+          <input name="supportFiles" id="profileFiles" type="file" multiple />
+        </label>
+        <label>
+          Notes
+          <textarea name="notes" id="profileNotes" rows="4" placeholder="Brand rules, SEO preferences, contacts, CMS notes..."></textarea>
+        </label>
+        <menu>
+          <button id="cancelClient" type="button" class="secondary-button">Cancel</button>
+          <button type="submit" class="primary-button">Save Client</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
