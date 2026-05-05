@@ -72,7 +72,7 @@ select {
 
 .client-panel,
 .tool-list,
-history-panel,
+.history-panel,
 .tool-panel {
   background: var(--surface);
   border: 1px solid var(--line);

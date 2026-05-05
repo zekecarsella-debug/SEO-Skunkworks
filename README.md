@@ -1,4 +1,4 @@
-# SEO-Skunkworks
+# National Positions SEO Automation MVP
 
 Internal upload-based SEO workflow app for Screaming Frog, Google Search Console, and Semrush exports.
 
