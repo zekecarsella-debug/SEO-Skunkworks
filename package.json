@@ -1,0 +1,14 @@
+{
+  "name": "np-seo-automation-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal SEO automation MVP for upload-based Screaming Frog, GSC, and Semrush workflows.",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "test": "node scripts/test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
