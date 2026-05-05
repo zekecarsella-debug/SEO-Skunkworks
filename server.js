@@ -8,6 +8,7 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = path.join(__dirname, "data");
 const CLIENTS_FILE = path.join(DATA_DIR, "clients.json");
 const CLIENT_ASSET_DIR = path.join(DATA_DIR, "client-assets");
+const EXPORT_DIR = path.join(DATA_DIR, "exports");
 const RUNTIME_NODE_MODULES =
   process.env.NODE_REPL_NODE_MODULE_DIRS ||
   "C:\\Users\\Zeke\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\node_modules";
@@ -73,6 +74,30 @@ function sendCsv(res, filename, columns, rows) {
   res.end(csv);
 }
 
+function sendExcelHtml(res, filename, columns, rows) {
+  const html = excelWorkbookHtml(columns, rows);
+  res.writeHead(200, {
+    "Content-Type": "application/vnd.ms-excel; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`
+  });
+  res.end(html);
+}
+
+function excelWorkbookHtml(columns, rows) {
+  return `<!doctype html><html><head><meta charset="utf-8" /></head><body><table>${[
+    `<tr>${columns.map(column => `<th>${escapeHtmlText(column)}</th>`).join("")}</tr>`,
+    ...rows.map(row => `<tr>${columns.map(column => `<td>${escapeHtmlText(row[column] ?? "")}</td>`).join("")}</tr>`)
+  ].join("")}</table></body></html>`;
+}
+
+function escapeHtmlText(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function toCsv(columns, rows) {
   return [
     columns.map(csvCell).join(","),
@@ -87,6 +112,7 @@ function csvCell(value) {
 
 function ensureDataDirs() {
   fs.mkdirSync(CLIENT_ASSET_DIR, { recursive: true });
+  fs.mkdirSync(EXPORT_DIR, { recursive: true });
   if (!fs.existsSync(CLIENTS_FILE)) fs.writeFileSync(CLIENTS_FILE, "[]");
 }
 
@@ -137,6 +163,31 @@ function serveClientAsset(req, res) {
       ext === ".svg" ? "image/svg+xml" :
       "application/octet-stream";
     res.writeHead(200, { "Content-Type": type });
+    res.end(data);
+  });
+}
+
+function serveExport(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const name = decodeURIComponent(url.pathname.replace(/^\/exports\//, ""));
+  const target = path.normalize(path.join(EXPORT_DIR, name));
+  if (!target.startsWith(EXPORT_DIR)) {
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
+  }
+  fs.readFile(target, (err, data) => {
+    if (err) {
+      res.writeHead(404);
+      res.end("Not found");
+      return;
+    }
+    const ext = path.extname(target).toLowerCase();
+    const type = ext === ".xls" ? "application/vnd.ms-excel; charset=utf-8" : "text/csv; charset=utf-8";
+    res.writeHead(200, {
+      "Content-Type": type,
+      "Content-Disposition": `attachment; filename="${path.basename(target)}"`
+    });
     res.end(data);
   });
 }
@@ -1057,16 +1108,36 @@ async function handleExport(req, res) {
     const payload = JSON.parse(body.toString("utf8") || "{}");
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     const columns = Array.isArray(payload.columns) && payload.columns.length ? payload.columns : Object.keys(rows[0] || {});
-    const filename = payload.filename || `seo-export-${new Date().toISOString().slice(0, 10)}.csv`;
-    sendCsv(res, filename, columns, rows);
+    const format = payload.format === "xls" ? "xls" : "csv";
+    const fallbackName = `seo-export-${new Date().toISOString().slice(0, 10)}.${format}`;
+    const filename = safeDownloadName(payload.filename || fallbackName, format);
+    const content = format === "xls" ? excelWorkbookHtml(columns, rows) : toCsv(columns, rows);
+    ensureDataDirs();
+    fs.writeFileSync(path.join(EXPORT_DIR, filename), content, "utf8");
+    sendJson(res, 200, {
+      filename,
+      url: `/exports/${encodeURIComponent(filename)}`,
+      content,
+      contentType: format === "xls" ? "application/vnd.ms-excel" : "text/csv"
+    });
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Could not export CSV." });
   }
 }
 
+function safeDownloadName(filename, format) {
+  const ext = `.${format}`;
+  const cleaned = String(filename || `export${ext}`)
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\.(csv|xls|xlsx)$/i, "")
+    .trim() || "export";
+  return `${cleaned}${ext}`;
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.method === "GET" && url.pathname.startsWith("/client-assets/")) return serveClientAsset(req, res);
+  if (req.method === "GET" && url.pathname.startsWith("/exports/")) return serveExport(req, res);
   if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, toolConfigs);
   if (req.method === "GET" && url.pathname === "/api/clients") return sendJson(res, 200, readClients());
   if (req.method === "POST" && url.pathname === "/api/clients") return handleClientSave(req, res);

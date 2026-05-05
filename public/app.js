@@ -330,31 +330,29 @@ exportButton.addEventListener("click", () => {
     setMessage("There are no exportable rows. Excluded rows are intentionally omitted.", true);
     return;
   }
-  const filename = `${state.configs[state.activeTool].title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}.csv`;
-  downloadCsv(exportColumns, exportRows, filename);
+  const format = state.activeTool === "brokenLinks" ? "xls" : "csv";
+  const filename = `${state.configs[state.activeTool].title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}.${format}`;
+  downloadExport(exportColumns, exportRows, filename, format);
 });
 
-async function downloadCsv(columns, rows, filename) {
+async function downloadExport(columns, rows, filename, format) {
   try {
     exportButton.disabled = true;
     const response = await fetch("/api/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ columns, rows, filename })
+      body: JSON.stringify({ columns, rows, filename, format })
     });
-    if (!response.ok) throw new Error("The server could not prepare the CSV.");
-    const blob = await response.blob();
-    const csvText = await blob.text();
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "The server could not prepare the export.");
     const a = document.createElement("a");
-    const downloadBlob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
-    const objectUrl = URL.createObjectURL(downloadBlob);
-    a.href = objectUrl;
-    a.download = filename;
+    a.href = payload.url;
+    a.download = payload.filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    showExportPanel(csvText, objectUrl, filename);
-    setMessage(`CSV download prepared: ${filename}. If no file appeared, use the visible Download CSV link or copy the preview below.`);
+    showExportPanel(payload.content, payload.url, payload.filename);
+    setMessage(`${format === "xls" ? "Excel" : "CSV"} download prepared: ${payload.filename}. If no file appeared, use the visible Download link or copy the preview below.`);
   } catch (error) {
     setMessage(error.message, true);
   } finally {
@@ -363,19 +361,15 @@ async function downloadCsv(columns, rows, filename) {
 }
 
 function showExportPanel(csvText, objectUrl, filename) {
-  if (manualDownloadLink.dataset.objectUrl) URL.revokeObjectURL(manualDownloadLink.dataset.objectUrl);
   manualDownloadLink.href = objectUrl;
   manualDownloadLink.download = filename;
-  manualDownloadLink.dataset.objectUrl = objectUrl;
   csvPreview.value = csvText;
   exportPanel.hidden = false;
 }
 
 function clearExportPanel() {
-  if (manualDownloadLink.dataset.objectUrl) URL.revokeObjectURL(manualDownloadLink.dataset.objectUrl);
   manualDownloadLink.removeAttribute("href");
   manualDownloadLink.removeAttribute("download");
-  delete manualDownloadLink.dataset.objectUrl;
   csvPreview.value = "";
   exportPanel.hidden = true;
 }
