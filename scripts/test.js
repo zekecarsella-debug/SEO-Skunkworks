@@ -114,6 +114,68 @@ test("XLSX parser skips chart sheets and finds the table worksheet", async () =>
   assert.equal(rows[0]["Submitted URL"], "https://example.com/missing-page");
 });
 
+test("additional keyword research XLSX parser prefers GSC Queries worksheet", async () => {
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8"?>
+    <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+      <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+      <Default Extension="xml" ContentType="application/xml"/>
+      <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+      <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+      <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+      <Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+      <Override PartName="/xl/worksheets/sheet4.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+    </Types>`);
+  zip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8"?>
+    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+    </Relationships>`);
+  zip.file("xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8"?>
+    <workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <sheets>
+        <sheet name="Chart" sheetId="1" r:id="rId1"/>
+        <sheet name="Queries" sheetId="2" r:id="rId2"/>
+        <sheet name="Pages" sheetId="3" r:id="rId3"/>
+        <sheet name="Countries" sheetId="4" r:id="rId4"/>
+      </sheets>
+    </workbook>`);
+  zip.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8"?>
+    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+      <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+      <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/>
+      <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet4.xml"/>
+    </Relationships>`);
+  zip.file("xl/worksheets/sheet1.xml", `<?xml version="1.0" encoding="UTF-8"?>
+    <worksheet><sheetData>
+      <row r="1"><c r="A1" t="inlineStr"><is><t>Date</t></is></c><c r="B1" t="inlineStr"><is><t>Clicks</t></is></c><c r="C1" t="inlineStr"><is><t>Impressions</t></is></c><c r="D1" t="inlineStr"><is><t>CTR</t></is></c><c r="E1" t="inlineStr"><is><t>Position</t></is></c></row>
+      <row r="2"><c r="A2" t="inlineStr"><is><t>2026-05-01</t></is></c><c r="B2"><v>10</v></c><c r="C2"><v>100</v></c><c r="D2"><v>0.1</v></c><c r="E2"><v>20</v></c></row>
+    </sheetData></worksheet>`);
+  zip.file("xl/worksheets/sheet2.xml", `<?xml version="1.0" encoding="UTF-8"?>
+    <worksheet><sheetData>
+      <row r="1"><c r="A1" t="inlineStr"><is><t>Top queries</t></is></c><c r="B1" t="inlineStr"><is><t>Clicks</t></is></c><c r="C1" t="inlineStr"><is><t>Impressions</t></is></c><c r="D1" t="inlineStr"><is><t>CTR</t></is></c><c r="E1" t="inlineStr"><is><t>Position</t></is></c></row>
+      <row r="2"><c r="A2" t="inlineStr"><is><t>fiber cement siding</t></is></c><c r="B2"><v>171</v></c><c r="C2"><v>43719</v></c><c r="D2"><v>0.0039</v></c><c r="E2"><v>9.54</v></c></row>
+    </sheetData></worksheet>`);
+  zip.file("xl/worksheets/sheet3.xml", `<?xml version="1.0" encoding="UTF-8"?>
+    <worksheet><sheetData>
+      <row r="1"><c r="A1" t="inlineStr"><is><t>Top pages</t></is></c><c r="B1" t="inlineStr"><is><t>Clicks</t></is></c><c r="C1" t="inlineStr"><is><t>Impressions</t></is></c></row>
+      <row r="2"><c r="A2" t="inlineStr"><is><t>https://example.com/</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row>
+    </sheetData></worksheet>`);
+  zip.file("xl/worksheets/sheet4.xml", `<?xml version="1.0" encoding="UTF-8"?>
+    <worksheet><sheetData>
+      <row r="1"><c r="A1" t="inlineStr"><is><t>Country</t></is></c><c r="B1" t="inlineStr"><is><t>Clicks</t></is></c><c r="C1" t="inlineStr"><is><t>Impressions</t></is></c></row>
+      <row r="2"><c r="A2" t="inlineStr"><is><t>United States</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row>
+    </sheetData></worksheet>`);
+
+  const rows = await parseXlsx(await zip.generateAsync({ type: "nodebuffer" }), "keywordResearch", { workflow: "additional" });
+  assert.equal(rows._worksheetName, "Queries");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]["Top queries"], "fiber cement siding");
+  assert.deepEqual(validate("keywordResearch", rows, [], { workflow: "additional" }).issues, []);
+  const results = runKeywordResearch(rows, sitemap, client, "additional", []);
+  assert.equal(results[0]["Keyword/Query"], "fiber cement siding");
+});
+
 test("bestMatch returns close sitemap URL", () => {
   const match = bestMatch("https://example.com/old/cement-siding.html", sitemap, client.homepageUrl);
   assert.equal(match.url, "https://example.com/products/cement-siding/");

@@ -312,7 +312,7 @@ function parseCsv(text) {
   });
 }
 
-async function parseXlsx(buffer, tool = "") {
+async function parseXlsx(buffer, tool = "", context = {}) {
   if (!JSZip) throw new Error("XLSX parsing needs JSZip from the bundled Codex runtime.");
   const zip = await JSZip.loadAsync(buffer);
   const sharedXml = await zip.file("xl/sharedStrings.xml")?.async("string");
@@ -338,12 +338,29 @@ async function parseXlsx(buffer, tool = "") {
   for (const sheet of sheets.length ? sheets : [{ name: "Sheet 1", sheetPath: "xl/worksheets/sheet1.xml" }]) {
     const sheetXml = await zip.file(sheet.sheetPath)?.async("string");
     if (!sheetXml) continue;
-    const parsed = parseWorksheetXml(sheetXml, shared, tool);
-    if (parsed.rows.length) candidates.push({ ...sheet, ...parsed });
+    const parsed = parseWorksheetXml(sheetXml, shared, tool, context);
+    if (parsed.rows.length) candidates.push({ ...sheet, ...parsed, score: parsed.score + worksheetPreferenceScore(sheet.name, tool, context) });
   }
   if (!candidates.length) return [];
   candidates.sort((a, b) => b.score - a.score);
-  return candidates[0].rows;
+  const rows = candidates[0].rows;
+  rows._worksheetName = candidates[0].name;
+  return rows;
+}
+
+function worksheetPreferenceScore(name, tool, context = {}) {
+  const sheetName = normalize(name);
+  if (tool !== "keywordResearch") return 0;
+  if (context.source === "template" && /keywordexpansion/.test(sheetName)) return 10000;
+  if (context.workflow === "additional") {
+    if (sheetName === "queries" || sheetName.includes("query")) return 10000;
+    if (["chart", "pages", "countries", "devices", "searchappearance", "filters"].includes(sheetName)) return -2000;
+  }
+  if (context.workflow === "initial") {
+    if (/competitivekeywordanalysis|keywordgap|keyword/.test(sheetName)) return 5000;
+    if (sheetName === "queries") return -1000;
+  }
+  return 0;
 }
 
 function workbookRelationships(rels) {
@@ -357,7 +374,7 @@ function workbookRelationships(rels) {
   return map;
 }
 
-function parseWorksheetXml(sheetXml, shared, tool) {
+function parseWorksheetXml(sheetXml, shared, tool, context = {}) {
   const rowMaps = [...sheetXml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)].map(rowMatch => {
     const row = {};
     for (const cellMatch of rowMatch[1].matchAll(/<c([^>]*)>([\s\S]*?)<\/c>/g)) {
@@ -374,7 +391,7 @@ function parseWorksheetXml(sheetXml, shared, tool) {
   if (!rowMaps.length) return { rows: [], score: 0 };
   const maxCol = Math.max(...rowMaps.map(row => Math.max(0, ...Object.keys(row).map(Number))));
   const matrices = rowMaps.map(row => Array.from({ length: maxCol + 1 }, (_, i) => cleanHeader(row[i] || "")));
-  const headerIndex = detectHeaderRow(matrices, tool);
+  const headerIndex = detectHeaderRow(matrices, tool, context);
   const header = matrices[headerIndex].map((cell, i) => cell || `column_${i + 1}`);
   const rows = rowMaps.slice(headerIndex + 1).map(row => {
     const record = {};
@@ -385,26 +402,30 @@ function parseWorksheetXml(sheetXml, shared, tool) {
   }).filter(record => Object.values(record).some(Boolean));
   return {
     rows,
-    score: rowHeaderScore(header, tool) * 1000 + Math.min(rows.length, 500)
+    score: rowHeaderScore(header, tool, context) * 1000 + Math.min(rows.length, 500)
   };
 }
 
-function detectHeaderRow(rows, tool) {
+function detectHeaderRow(rows, tool, context = {}) {
   let best = { index: 0, score: -1 };
   rows.slice(0, 30).forEach((row, index) => {
     const nonEmpty = row.filter(Boolean).length;
-    const score = rowHeaderScore(row, tool) * 10 + Math.min(nonEmpty, 8);
+    const score = rowHeaderScore(row, tool, context) * 10 + Math.min(nonEmpty, 8);
     if (score > best.score) best = { index, score };
   });
   return best.index;
 }
 
-function rowHeaderScore(headers, tool) {
+function rowHeaderScore(headers, tool, context = {}) {
   const joined = headers.map(normalize).join(" ");
   const candidates = {
     redirects404: ["url", "page", "address", "notfound", "submittedurl", "lastcrawled"],
     brokenLinks: ["source", "sourceurl", "destination", "linkurl", "anchor", "statuscode"],
-    keywordResearch: ["keyword", "query", "position", "volume", "rankingurl"],
+    keywordResearch: context.source === "template"
+      ? ["keyword", "primarykeyword", "secondarykeyword", "category", "preferredpage", "rankingurl"]
+      : context.workflow === "additional"
+        ? ["topqueries", "query", "queries", "clicks", "impressions", "ctr", "position", "averageposition"]
+        : ["keyword", "searchterm", "query", "position", "volume", "searchvolume", "rankingurl", "intent"],
     altText: ["image", "imageurl", "source", "sourceurl", "alttext", "inlinks"]
   }[tool] || ["url", "keyword", "source", "destination", "image"];
   return candidates.reduce((score, candidate) => score + (joined.includes(normalize(candidate)) ? 1 : 0), 0);
@@ -423,11 +444,13 @@ function decodeXml(value) {
     .replace(/&apos;/g, "'");
 }
 
-async function parseUpload(file, tool = "") {
+async function parseUpload(file, tool = "", context = {}) {
   const ext = path.extname(file.filename).toLowerCase();
-  if (ext === ".xlsx") return parseXlsx(file.buffer, tool);
+  if (ext === ".xlsx") return parseXlsx(file.buffer, tool, context);
   if (ext === ".xml") return parseSitemap(file.buffer.toString("utf8"));
-  return parseCsv(file.buffer.toString("utf8").replace(/^\uFEFF/, ""));
+  const rows = parseCsv(file.buffer.toString("utf8").replace(/^\uFEFF/, ""));
+  rows._worksheetName = "CSV";
+  return rows;
 }
 
 async function parseSitemapUpload(file) {
@@ -874,7 +897,7 @@ function runInitialKeywordResearch(rows, templateRows, client) {
 function runAdditionalKeywordResearch(rows, templateRows, client) {
   const expansion = expansionKeywordMap(templateRows);
   return rows.map(row => {
-    const keyword = value(row, ["Query", "Keyword", "Search Term"]);
+    const keyword = value(row, ["Top queries", "Query", "Queries", "Keyword", "Search Term"]);
     const clicks = parseNumber(value(row, ["Clicks"]));
     const impressions = parseNumber(value(row, ["Impressions"]));
     const ctr = value(row, ["CTR", "Click Through Rate"]);
@@ -1176,17 +1199,26 @@ function titleCase(text) {
     .join(" ");
 }
 
-function validate(tool, rows, sitemap) {
+function validate(tool, rows, sitemap, context = {}) {
   const sample = rows[0] || {};
   const headers = Object.keys(sample);
   const issues = [];
+  const worksheet = rows._worksheetName ? ` Parsed worksheet: ${rows._worksheetName}.` : "";
   const needsSitemap = tool === "brokenLinks" || tool === "redirects404";
   if (!rows.length) issues.push("No spreadsheet rows were parsed.");
   if (needsSitemap && !sitemap.length) issues.push("No sitemap URLs were parsed.");
   if (tool === "redirects404" && !headers.some(h => /url|address|page|submitted/i.test(h))) issues.push("Could not identify a 404 URL column.");
   if (tool === "brokenLinks" && !headers.some(h => /destination|link|url|address/i.test(h))) issues.push("Could not identify a broken destination URL column.");
   if (tool === "altText" && !headers.some(h => /image|destination|address/i.test(h))) issues.push("Could not identify an image URL column.");
-  if (tool === "keywordResearch" && !headers.some(h => /keyword|query|search/i.test(h))) issues.push("Could not identify a keyword/query column.");
+  if (tool === "keywordResearch") {
+    const hasKeywordColumn = headers.some(h => /keyword|query|queries|search|top queries/i.test(h));
+    const hasGscMetrics = headers.some(h => /^clicks$/i.test(h)) && headers.some(h => /^impressions$/i.test(h));
+    if (context.workflow === "additional" && (!hasKeywordColumn || !hasGscMetrics)) {
+      issues.push(`Could not identify a GSC Queries worksheet with query, clicks, and impressions columns.${worksheet}`);
+    } else if (context.workflow !== "additional" && !hasKeywordColumn) {
+      issues.push(`Could not identify a keyword/query column.${worksheet}`);
+    }
+  }
   return { headers, issues };
 }
 
@@ -1207,23 +1239,24 @@ async function handleRun(req, res) {
     const sitemapFile = files.find(file => /sitemap/i.test(file.field) || /\.xml$/i.test(file.filename));
     const templateFile = files.find(file => /template/i.test(file.field));
     if (!sheetFile) return sendJson(res, 400, { error: "Upload a CSV or XLSX export first." });
-    const rows = await parseUpload(sheetFile, tool);
+    const keywordWorkflow = fields.keywordWorkflow || "initial";
+    const rows = await parseUpload(sheetFile, tool, tool === "keywordResearch" ? { workflow: keywordWorkflow } : {});
     const sitemap = sitemapFile ? await parseSitemapUpload(sitemapFile) : [];
-    const templateRows = templateFile ? await parseUpload(templateFile, "keywordResearch") : [];
-    const validation = validate(tool, rows, sitemap);
+    const templateRows = templateFile ? await parseUpload(templateFile, "keywordResearch", { source: "template", workflow: keywordWorkflow }) : [];
+    const validation = validate(tool, rows, sitemap, tool === "keywordResearch" ? { workflow: keywordWorkflow } : {});
     if (validation.issues.length) return sendJson(res, 422, { error: "Input validation failed.", validation });
     const results =
       tool === "brokenLinks" ? runBrokenLinks(rows, sitemap, client) :
       tool === "redirects404" ? runRedirects(rows, sitemap, client) :
-      tool === "keywordResearch" ? runKeywordResearch(rows, sitemap, client, fields.keywordWorkflow || "initial", templateRows) :
+      tool === "keywordResearch" ? runKeywordResearch(rows, sitemap, client, keywordWorkflow, templateRows) :
       runAltText(rows, sitemap, client);
     const exportRows =
       tool === "redirects404" ? formatRedirectRowsForPlatform(results, client.cmsPlatform) :
       tool === "brokenLinks" ? formatBrokenLinkRowsForExport(results) :
-      tool === "keywordResearch" ? formatKeywordRowsForExport(results, fields.keywordWorkflow || "initial") :
+      tool === "keywordResearch" ? formatKeywordRowsForExport(results, keywordWorkflow) :
       tool === "altText" ? formatAltTextRowsForExport(results) :
       results;
-    const exportSheets = tool === "keywordResearch" && (fields.keywordWorkflow || "initial") === "additional"
+    const exportSheets = tool === "keywordResearch" && keywordWorkflow === "additional"
       ? keywordAdditionalSheets(results)
       : null;
     sendJson(res, 200, {
