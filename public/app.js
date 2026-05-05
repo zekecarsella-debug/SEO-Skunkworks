@@ -24,6 +24,8 @@ const runForm = document.querySelector("#runForm");
 const sitemapBox = document.querySelector("#sitemapBox");
 const templateBox = document.querySelector("#templateBox");
 const workflowField = document.querySelector("#workflowField");
+const keywordWorkflow = document.querySelector('select[name="keywordWorkflow"]');
+const mainUploadLabel = document.querySelector("#mainUploadLabel");
 const mainHelp = document.querySelector("#mainHelp");
 const message = document.querySelector("#message");
 const resultsTable = document.querySelector("#resultsTable");
@@ -83,7 +85,7 @@ function selectTool(key) {
   document.querySelectorAll(".tool-card").forEach(card => card.classList.toggle("active", card.dataset.tool === key));
   toolTitle.textContent = config.title;
   toolPrompt.textContent = config.prompt;
-  mainHelp.textContent = config.requiredFiles[0];
+  updateUploadLabels();
   sitemapBox.style.display = key === "brokenLinks" || key === "redirects404" ? "grid" : "none";
   sitemapBox.querySelector("input").required = key === "brokenLinks" || key === "redirects404";
   templateBox.style.display = key === "keywordResearch" ? "grid" : "none";
@@ -97,6 +99,27 @@ function selectTool(key) {
   renderTable();
   setMessage("");
 }
+
+function updateUploadLabels() {
+  if (state.activeTool !== "keywordResearch") {
+    mainUploadLabel.textContent = "Main Export";
+    mainHelp.textContent = state.configs[state.activeTool]?.requiredFiles?.[0] || "Upload the workflow export.";
+    return;
+  }
+  if (keywordWorkflow.value === "additional") {
+    mainUploadLabel.textContent = "GSC CSV/XLSX";
+    mainHelp.textContent = "Upload the Google Search Console Queries export from the last 3 months.";
+    templateBox.querySelector("span").textContent = "Campaign Strategy Template";
+    templateBox.querySelector("small").textContent = "Upload the template with the existing Keyword Expansion worksheet.";
+  } else {
+    mainUploadLabel.textContent = "Semrush Keyword Gap";
+    mainHelp.textContent = "Upload the Semrush Keyword Gap export for the client and competitors.";
+    templateBox.querySelector("span").textContent = "Campaign Strategy Template";
+    templateBox.querySelector("small").textContent = "Upload the client's current campaign strategy template.";
+  }
+}
+
+keywordWorkflow.addEventListener("change", updateUploadLabels);
 
 function renderClients() {
   clientSelect.innerHTML = `<option value="">New or unsaved client</option>` + state.clients
