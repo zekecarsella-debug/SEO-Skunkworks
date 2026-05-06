@@ -140,6 +140,12 @@ button {
   height: 54px;
   object-fit: contain;
   object-position: left center;
+  cursor: pointer;
+}
+
+.brand-lockup img:focus-visible {
+  outline: 3px solid rgba(237, 28, 36, 0.55);
+  outline-offset: 4px;
 }
 
 .brand-lockup h1 {

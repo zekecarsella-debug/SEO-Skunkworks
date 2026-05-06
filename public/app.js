@@ -111,6 +111,17 @@ document.querySelector("#googleLoginButton").addEventListener("click", () => {
   renderUser();
   showView("dashboard");
 });
+document.querySelectorAll(".app-header .brand-lockup img").forEach(logo => {
+  logo.title = "Back to welcome";
+  logo.tabIndex = 0;
+  logo.addEventListener("click", goToWelcome);
+  logo.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      goToWelcome();
+    }
+  });
+});
 document.querySelector("#backToDashboard").addEventListener("click", () => showView("dashboard"));
 document.querySelector("#backToClient").addEventListener("click", () => showView(activeClient() ? "client" : "dashboard"));
 document.querySelector("#addClientDashboard").addEventListener("click", () => openClientDialog(null));
@@ -133,6 +144,11 @@ document.querySelector("#cancelClient").addEventListener("click", () => clientDi
 clientSearch.addEventListener("input", renderDashboard);
 podFilter.addEventListener("change", renderDashboard);
 keywordWorkflow.addEventListener("change", updateUploadLabels);
+
+function goToWelcome() {
+  localStorage.removeItem("seo-mvp-entered");
+  showView("welcome");
+}
 
 function pods() {
   return [...new Set([...state.savedPods, ...state.clients.map(client => client.pod || "Unassigned")])]
