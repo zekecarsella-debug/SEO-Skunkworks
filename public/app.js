@@ -3,21 +3,36 @@ const state = {
   clients: [],
   activeClientId: "",
   activeTool: "brokenLinks",
+  view: localStorage.getItem("seo-mvp-entered") ? "dashboard" : "welcome",
   results: [],
   exportRows: [],
   exportColumns: [],
   exportSheets: null,
   columns: [],
   history: JSON.parse(localStorage.getItem("seo-mvp-history") || "[]"),
-  brand: JSON.parse(localStorage.getItem("seo-mvp-brand") || "null") || {
-    agencyName: "National Positions",
-    productName: "SEO Solutions",
-    primaryColor: "#004b8d",
-    secondaryColor: "#17a2a4"
-  }
+  user: JSON.parse(localStorage.getItem("seo-mvp-user") || "null") || null
 };
 
-const toolList = document.querySelector("#toolList");
+const views = {
+  welcome: document.querySelector("#welcomeView"),
+  login: document.querySelector("#loginView"),
+  dashboard: document.querySelector("#dashboardView"),
+  client: document.querySelector("#clientView"),
+  tool: document.querySelector("#toolView")
+};
+
+const clientCards = document.querySelector("#clientCards");
+const clientSearch = document.querySelector("#clientSearch");
+const podFilter = document.querySelector("#podFilter");
+const podOptions = document.querySelector("#podOptions");
+const clientMetric = document.querySelector("#clientMetric");
+const podMetric = document.querySelector("#podMetric");
+const historyList = document.querySelector("#historyList");
+const clientPageTitle = document.querySelector("#clientPageTitle");
+const clientDetailSummary = document.querySelector("#clientDetailSummary");
+const clientToolCards = document.querySelector("#clientToolCards");
+const clientDialog = document.querySelector("#clientDialog");
+const clientForm = document.querySelector("#clientForm");
 const toolTitle = document.querySelector("#toolTitle");
 const toolPrompt = document.querySelector("#toolPrompt");
 const runForm = document.querySelector("#runForm");
@@ -35,56 +50,225 @@ const tableFilter = document.querySelector("#tableFilter");
 const confidenceFilter = document.querySelector("#confidenceFilter");
 const statusFilter = document.querySelector("#statusFilter");
 const markVisibleReviewed = document.querySelector("#markVisibleReviewed");
-const historyList = document.querySelector("#historyList");
-const clientSelect = document.querySelector("#clientSelect");
-const clientSummary = document.querySelector("#clientSummary");
-const clientDialog = document.querySelector("#clientDialog");
-const clientForm = document.querySelector("#clientForm");
 const exportPanel = document.querySelector("#exportPanel");
 const manualDownloadLink = document.querySelector("#manualDownloadLink");
 const copyCsvButton = document.querySelector("#copyCsvButton");
 const csvPreview = document.querySelector("#csvPreview");
 
 async function init() {
-  applyBrand();
   const [configResponse, clientsResponse] = await Promise.all([
     fetch("/api/config"),
     fetch("/api/clients")
   ]);
   state.configs = await configResponse.json();
   state.clients = await clientsResponse.json();
-  renderTools();
-  renderClients();
-  selectTool(state.activeTool);
+  renderAll();
+  showView(state.view);
+}
+
+function renderAll() {
+  renderUser();
+  renderDashboard();
+  renderClientDetail();
+  renderClientTools();
   renderHistory();
+  selectTool(state.activeTool);
 }
 
-function applyBrand() {
-  document.documentElement.style.setProperty("--primary", state.brand.primaryColor);
-  document.documentElement.style.setProperty("--secondary", state.brand.secondaryColor);
-  document.querySelector("#brandTitle").textContent = `${state.brand.agencyName} ${state.brand.productName}`;
-  document.title = `${state.brand.agencyName} ${state.brand.productName}`;
-}
-
-function renderTools() {
-  toolList.innerHTML = "";
-  Object.entries(state.configs).forEach(([key, config]) => {
-    const button = document.createElement("button");
-    button.className = "tool-card";
-    button.type = "button";
-    button.dataset.tool = key;
-    button.innerHTML = `<strong>${escapeHtml(config.title)}</strong><span>${escapeHtml(config.requiredFiles.join(" + "))}</span>`;
-    button.addEventListener("click", () => selectTool(key));
-    toolList.appendChild(button);
+function showView(view) {
+  state.view = view;
+  Object.entries(views).forEach(([key, element]) => {
+    element.hidden = key !== view;
   });
+  if (view === "dashboard") {
+    localStorage.setItem("seo-mvp-entered", "true");
+    renderDashboard();
+  }
+  if (view === "client") renderClientDetail();
+  if (view === "tool") {
+    applyClientToRunForm(activeClient());
+    selectTool(state.activeTool);
+  }
+}
+
+function renderUser() {
+  const user = state.user || { name: "National Positions User" };
+  document.querySelector("#userLabel").textContent = user.name;
+  document.querySelector("#userInitials").textContent = initials(user.name);
+}
+
+document.querySelector("#enterAppButton").addEventListener("click", () => showView("login"));
+document.querySelector("#googleLoginButton").addEventListener("click", () => {
+  state.user = { name: "National Positions User", provider: "google-ui" };
+  localStorage.setItem("seo-mvp-user", JSON.stringify(state.user));
+  renderUser();
+  showView("dashboard");
+});
+document.querySelector("#backToDashboard").addEventListener("click", () => showView("dashboard"));
+document.querySelector("#backToClient").addEventListener("click", () => showView(activeClient() ? "client" : "dashboard"));
+document.querySelector("#addClientDashboard").addEventListener("click", () => openClientDialog(null));
+document.querySelector("#editClientButton").addEventListener("click", () => openClientDialog(activeClient()));
+document.querySelector("#cancelClient").addEventListener("click", () => clientDialog.close());
+
+clientSearch.addEventListener("input", renderDashboard);
+podFilter.addEventListener("change", renderDashboard);
+keywordWorkflow.addEventListener("change", updateUploadLabels);
+
+function pods() {
+  return [...new Set(state.clients.map(client => client.pod || "Unassigned"))].sort((a, b) => a.localeCompare(b));
+}
+
+function renderDashboard() {
+  const allPods = pods();
+  const existingValue = podFilter.value;
+  podFilter.innerHTML = `<option value="">All Pods</option>` + allPods
+    .map(pod => `<option value="${escapeAttr(pod)}">${escapeHtml(pod)}</option>`)
+    .join("");
+  podFilter.value = allPods.includes(existingValue) ? existingValue : "";
+  podOptions.innerHTML = allPods.map(pod => `<option value="${escapeAttr(pod)}"></option>`).join("");
+
+  const query = clientSearch.value.trim().toLowerCase();
+  const selectedPod = podFilter.value;
+  const filtered = state.clients.filter(client => {
+    const clientPod = client.pod || "Unassigned";
+    const haystack = [client.name, client.domain, client.specialty, clientPod, client.cmsPlatform].join(" ").toLowerCase();
+    return (!selectedPod || clientPod === selectedPod) && (!query || haystack.includes(query));
+  });
+
+  clientMetric.textContent = state.clients.length.toLocaleString();
+  podMetric.textContent = allPods.length.toLocaleString();
+
+  if (!filtered.length) {
+    clientCards.innerHTML = `<div class="empty-state">No clients match this search or Pod filter yet.</div>`;
+    return;
+  }
+
+  clientCards.innerHTML = filtered.map(client => `
+    <button class="client-card" type="button" data-client-id="${escapeAttr(client.id)}">
+      <div class="client-card-top">
+        ${client.logo?.url ? `<img class="client-logo" src="${escapeAttr(client.logo.url)}" alt="${escapeAttr(client.name)} logo" />` : `<span class="client-avatar">${escapeHtml(initials(client.name || client.domain || "NP"))}</span>`}
+        <span class="pod-pill">${escapeHtml(client.pod || "Unassigned")}</span>
+      </div>
+      <div>
+        <h3>${escapeHtml(client.name || "Unnamed client")}</h3>
+        <p>${escapeHtml([client.domain, cmsLabel(client.cmsPlatform)].filter(Boolean).join(" - ") || "No domain saved")}</p>
+      </div>
+      <span class="meta-line">${escapeHtml(client.specialty || "No specialty saved yet")}</span>
+    </button>
+  `).join("");
+}
+
+clientCards.addEventListener("click", event => {
+  const card = event.target.closest("[data-client-id]");
+  if (!card) return;
+  state.activeClientId = card.dataset.clientId;
+  showView("client");
+});
+
+function activeClient() {
+  return state.clients.find(client => client.id === state.activeClientId);
+}
+
+function renderClientDetail() {
+  const client = activeClient();
+  if (!client) {
+    clientPageTitle.textContent = "Client";
+    clientDetailSummary.innerHTML = `<p class="client-detail-text">Choose a client from the dashboard to view profile details and tools.</p>`;
+    return;
+  }
+  clientPageTitle.textContent = client.name || "Unnamed client";
+  const links = [
+    client.websiteUrl && `<a href="${escapeAttr(client.websiteUrl)}" target="_blank">Website</a>`,
+    client.campaignStrategyUrl && `<a href="${escapeAttr(client.campaignStrategyUrl)}" target="_blank">Campaign Strategy Template</a>`,
+    client.driveFolderUrl && `<a href="${escapeAttr(client.driveFolderUrl)}" target="_blank">Client Folder</a>`
+  ].filter(Boolean).join("");
+  clientDetailSummary.innerHTML = `
+    ${client.logo?.url ? `<img class="client-detail-logo" src="${escapeAttr(client.logo.url)}" alt="${escapeAttr(client.name)} logo" />` : ""}
+    <span class="pod-pill">${escapeHtml(client.pod || "Unassigned")}</span>
+    <h2>${escapeHtml(client.name || "Unnamed client")}</h2>
+    <p class="client-detail-text">${escapeHtml([client.domain, client.specialty, cmsLabel(client.cmsPlatform)].filter(Boolean).join(" - ") || "No domain, specialty, or CMS saved yet.")}</p>
+    <div class="detail-list">
+      ${client.homepageUrl ? `<span><strong>Homepage:</strong> ${escapeHtml(client.homepageUrl)}</span>` : ""}
+      ${links ? `<span><strong>Links:</strong> ${links}</span>` : ""}
+      ${client.assets?.length ? `<span><strong>Helpful files:</strong> ${client.assets.length}</span>` : ""}
+      ${client.notes ? `<span><strong>Notes:</strong> ${escapeHtml(client.notes)}</span>` : ""}
+    </div>
+  `;
+  renderClientTools();
+}
+
+function renderClientTools() {
+  clientToolCards.innerHTML = Object.entries(state.configs).map(([key, config]) => `
+    <button class="tool-card" type="button" data-tool="${escapeAttr(key)}">
+      <div class="tool-card-top">
+        <span class="tool-icon">${escapeHtml(toolInitial(config.title))}</span>
+      </div>
+      <div>
+        <h3>${escapeHtml(config.title)}</h3>
+        <p>${escapeHtml(config.requiredFiles.join(" + "))}</p>
+      </div>
+    </button>
+  `).join("");
+}
+
+clientToolCards.addEventListener("click", event => {
+  const card = event.target.closest("[data-tool]");
+  if (!card) return;
+  selectTool(card.dataset.tool);
+  showView("tool");
+});
+
+function openClientDialog(client) {
+  clientForm.reset();
+  document.querySelector("#clientId").value = client?.id || "";
+  document.querySelector("#profileName").value = client?.name || "";
+  document.querySelector("#profilePod").value = client?.pod || "";
+  document.querySelector("#profileDomain").value = client?.domain || "";
+  document.querySelector("#profileSpecialty").value = client?.specialty || "";
+  document.querySelector("#profileCms").value = client?.cmsPlatform || "other";
+  document.querySelector("#profileHomepage").value = client?.homepageUrl || "";
+  document.querySelector("#profileWebsite").value = client?.websiteUrl || client?.homepageUrl || "";
+  document.querySelector("#profileCampaign").value = client?.campaignStrategyUrl || "";
+  document.querySelector("#profileDrive").value = client?.driveFolderUrl || "";
+  document.querySelector("#profilePrimary").value = client?.primaryColor || "#003a5d";
+  document.querySelector("#profileSecondary").value = client?.secondaryColor || "#ed1c24";
+  document.querySelector("#profileNotes").value = client?.notes || "";
+  clientDialog.showModal();
+}
+
+clientForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const formData = new FormData(clientForm);
+  const response = await fetch("/api/clients", { method: "POST", body: formData });
+  const client = await response.json();
+  if (!response.ok) {
+    setMessage(client.error || "Could not save client.", true);
+    return;
+  }
+  const index = state.clients.findIndex(item => item.id === client.id);
+  if (index >= 0) state.clients[index] = client;
+  else state.clients.unshift(client);
+  state.activeClientId = client.id;
+  applyClientToRunForm(client);
+  clientDialog.close();
+  renderDashboard();
+  renderClientDetail();
+  showView("client");
+});
+
+function applyClientToRunForm(client) {
+  runForm.elements.clientName.value = client?.name || "";
+  runForm.elements.clientDomain.value = client?.domain || "";
+  runForm.elements.clientSpecialty.value = client?.specialty || "";
+  runForm.elements.cmsPlatform.value = client?.cmsPlatform || "other";
+  runForm.elements.homepageUrl.value = client?.homepageUrl || client?.websiteUrl || "";
 }
 
 function selectTool(key) {
   state.activeTool = key;
-  const config = state.configs[key];
-  document.querySelectorAll(".tool-card").forEach(card => card.classList.toggle("active", card.dataset.tool === key));
-  toolTitle.textContent = config.title;
-  toolPrompt.textContent = config.prompt;
+  const config = state.configs[key] || {};
+  toolTitle.textContent = config.title || "Choose a Tool";
+  toolPrompt.textContent = config.prompt || "";
   updateUploadLabels();
   sitemapBox.style.display = key === "brokenLinks" || key === "redirects404" ? "grid" : "none";
   sitemapBox.querySelector("input").required = key === "brokenLinks" || key === "redirects404";
@@ -118,94 +302,6 @@ function updateUploadLabels() {
     templateBox.querySelector("small").textContent = "Upload the client's current campaign strategy template.";
   }
 }
-
-keywordWorkflow.addEventListener("change", updateUploadLabels);
-
-function renderClients() {
-  clientSelect.innerHTML = `<option value="">New or unsaved client</option>` + state.clients
-    .map(client => `<option value="${escapeHtml(client.id)}">${escapeHtml(client.name || "Unnamed client")}</option>`)
-    .join("");
-  clientSelect.value = state.activeClientId;
-  renderClientSummary();
-}
-
-function activeClient() {
-  return state.clients.find(client => client.id === state.activeClientId);
-}
-
-function renderClientSummary() {
-  const client = activeClient();
-  if (!client) {
-    clientSummary.innerHTML = `<span>Choose or save a client to reuse site links, campaign templates, branding, and notes.</span>`;
-    return;
-  }
-  const links = [
-    client.websiteUrl && `<a href="${escapeAttr(client.websiteUrl)}" target="_blank">Website</a>`,
-    client.campaignStrategyUrl && `<a href="${escapeAttr(client.campaignStrategyUrl)}" target="_blank">Campaign Strategy Template</a>`,
-    client.driveFolderUrl && `<a href="${escapeAttr(client.driveFolderUrl)}" target="_blank">Client Folder</a>`
-  ].filter(Boolean).join(" ");
-  clientSummary.innerHTML = `
-    ${client.logo?.url ? `<img src="${escapeAttr(client.logo.url)}" alt="${escapeAttr(client.name)} logo" />` : ""}
-    <strong>${escapeHtml(client.name)}</strong>
-    <span>${escapeHtml([client.domain, client.specialty, cmsLabel(client.cmsPlatform)].filter(Boolean).join(" - ") || "No domain or specialty saved yet.")}</span>
-    ${links ? `<div>${links}</div>` : ""}
-    ${client.assets?.length ? `<span>${client.assets.length} helpful file${client.assets.length === 1 ? "" : "s"} stored.</span>` : ""}
-  `;
-}
-
-function applyClientToRunForm(client) {
-  runForm.elements.clientName.value = client?.name || "";
-  runForm.elements.clientDomain.value = client?.domain || "";
-  runForm.elements.clientSpecialty.value = client?.specialty || "";
-  runForm.elements.cmsPlatform.value = client?.cmsPlatform || "other";
-  runForm.elements.homepageUrl.value = client?.homepageUrl || client?.websiteUrl || "";
-}
-
-clientSelect.addEventListener("change", () => {
-  state.activeClientId = clientSelect.value;
-  const client = activeClient();
-  applyClientToRunForm(client);
-  renderClientSummary();
-});
-
-document.querySelector("#clientDialogButton").addEventListener("click", () => {
-  const client = activeClient();
-  clientForm.reset();
-  document.querySelector("#clientId").value = client?.id || "";
-  document.querySelector("#profileName").value = client?.name || runForm.elements.clientName.value || "";
-  document.querySelector("#profileDomain").value = client?.domain || runForm.elements.clientDomain.value || "";
-  document.querySelector("#profileSpecialty").value = client?.specialty || runForm.elements.clientSpecialty.value || "";
-  document.querySelector("#profileCms").value = client?.cmsPlatform || runForm.elements.cmsPlatform.value || "other";
-  document.querySelector("#profileHomepage").value = client?.homepageUrl || runForm.elements.homepageUrl.value || "";
-  document.querySelector("#profileWebsite").value = client?.websiteUrl || client?.homepageUrl || "";
-  document.querySelector("#profileCampaign").value = client?.campaignStrategyUrl || "";
-  document.querySelector("#profileDrive").value = client?.driveFolderUrl || "";
-  document.querySelector("#profilePrimary").value = client?.primaryColor || state.brand.primaryColor;
-  document.querySelector("#profileSecondary").value = client?.secondaryColor || state.brand.secondaryColor;
-  document.querySelector("#profileNotes").value = client?.notes || "";
-  clientDialog.showModal();
-});
-
-document.querySelector("#cancelClient").addEventListener("click", () => clientDialog.close());
-
-clientForm.addEventListener("submit", async event => {
-  event.preventDefault();
-  const formData = new FormData(clientForm);
-  const response = await fetch("/api/clients", { method: "POST", body: formData });
-  const client = await response.json();
-  if (!response.ok) {
-    setMessage(client.error || "Could not save client.", true);
-    return;
-  }
-  const index = state.clients.findIndex(item => item.id === client.id);
-  if (index >= 0) state.clients[index] = client;
-  else state.clients.unshift(client);
-  state.activeClientId = client.id;
-  applyClientToRunForm(client);
-  renderClients();
-  clientDialog.close();
-  setMessage(`Saved client profile for ${client.name}.`);
-});
 
 runForm.addEventListener("submit", async event => {
   event.preventDefault();
@@ -241,7 +337,7 @@ function runSummary(payload) {
     return `Generated ${payload.results.length.toLocaleString()} broken-link rows: ${replacements} replacements, ${removals} removals, ${reviews} file/image review items.`;
   }
   const preview = included.slice(0, payload.config.previewCount || 0)
-    .map(row => `${row["Source URL"] || row.Source || row.URL} -> ${row["Redirect URL"] || row["Replacement URL"] || row["Preferred Page"] || ""}`)
+    .map(row => `${row["Source URL"] || row.Source || row.URL || row["Keyword/Query"] || row.Keyword} -> ${row["Redirect URL"] || row["Replacement URL"] || row["Preferred Page"] || ""}`)
     .filter(Boolean);
   const parts = [`Generated ${included.length.toLocaleString()} export-ready recommendations for ${payload.client.name || "this client"}.`];
   if (excluded.length) parts.push(`${excluded.length.toLocaleString()} unsafe infrastructure/asset rows were excluded from export.`);
@@ -250,8 +346,6 @@ function runSummary(payload) {
 }
 
 function renderTable() {
-  const filter = tableFilter.value.trim().toLowerCase();
-  const confidence = confidenceFilter.value;
   const rows = visibleResultIndexes().map(index => state.results[index]);
   rowCount.textContent = state.results.length ? `${rows.length} of ${state.results.length} rows` : "No run yet";
   exportButton.disabled = !state.results.length;
@@ -261,9 +355,7 @@ function renderTable() {
   }
   const thead = `<thead><tr>${state.columns.map(column => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>`;
   const tbody = rows.map((row, rowIndex) => `
-    <tr>
-      ${state.columns.map(column => renderCell(row, rowIndex, column)).join("")}
-    </tr>
+    <tr>${state.columns.map(column => renderCell(row, rowIndex, column)).join("")}</tr>
   `).join("");
   resultsTable.innerHTML = `${thead}<tbody>${tbody}</tbody>`;
 }
@@ -407,18 +499,13 @@ function clearExportPanel() {
 copyCsvButton.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(csvPreview.value);
-    setMessage("CSV copied to clipboard.");
+    setMessage("Export preview copied to clipboard.");
   } catch {
     csvPreview.select();
     document.execCommand("copy");
-    setMessage("CSV selected and copied.");
+    setMessage("Export preview selected and copied.");
   }
 });
-
-function csvCell(value) {
-  const text = String(value);
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
 
 function saveHistory(payload) {
   const item = {
@@ -426,6 +513,8 @@ function saveHistory(payload) {
     tool: state.activeTool,
     toolTitle: payload.config.title,
     client: payload.client.name || "Unnamed client",
+    clientId: state.activeClientId,
+    pod: activeClient()?.pod || "Unassigned",
     generatedAt: payload.generatedAt,
     rows: payload.results.length,
     results: payload.results,
@@ -443,9 +532,10 @@ function renderHistory() {
     return;
   }
   historyList.innerHTML = state.history.map(item => `
-    <button type="button" data-id="${item.id}">
+    <button type="button" data-id="${escapeAttr(item.id)}">
       <strong>${escapeHtml(item.client)}</strong><br />
-      ${escapeHtml(item.toolTitle)} - ${item.rows} rows
+      ${escapeHtml(item.toolTitle)} - ${item.rows} rows<br />
+      <span>${escapeHtml(item.pod || "Unassigned")}</span>
     </button>
   `).join("");
 }
@@ -455,12 +545,14 @@ historyList.addEventListener("click", event => {
   if (!button) return;
   const item = state.history.find(run => run.id === button.dataset.id);
   if (!item) return;
+  state.activeClientId = item.clientId || state.activeClientId;
   selectTool(item.tool);
   state.results = item.results;
   state.exportRows = item.exportRows || item.results;
   state.exportColumns = item.exportColumns || Object.keys(state.exportRows[0] || {});
   state.exportSheets = item.exportSheets || null;
   state.columns = Object.keys(state.results[0] || {});
+  showView("tool");
   renderTable();
   setMessage(`Loaded ${item.rows} saved recommendations for ${item.client}.`);
 });
@@ -471,27 +563,17 @@ function setMessage(text, isError = false) {
   message.classList.toggle("error", isError);
 }
 
-document.querySelector("#settingsButton").addEventListener("click", () => {
-  document.querySelector("#agencyName").value = state.brand.agencyName;
-  document.querySelector("#productName").value = state.brand.productName;
-  document.querySelector("#primaryColor").value = state.brand.primaryColor;
-  document.querySelector("#secondaryColor").value = state.brand.secondaryColor;
-  document.querySelector("#settingsDialog").showModal();
-});
+function initials(text) {
+  const parts = String(text || "NP").trim().split(/\s+/).filter(Boolean);
+  return (parts[0]?.[0] || "N") + (parts[1]?.[0] || parts[0]?.[1] || "P");
+}
 
-document.querySelector("#saveBrand").addEventListener("click", () => {
-  state.brand = {
-    agencyName: document.querySelector("#agencyName").value || "National Positions",
-    productName: document.querySelector("#productName").value || "SEO Solutions",
-    primaryColor: document.querySelector("#primaryColor").value,
-    secondaryColor: document.querySelector("#secondaryColor").value
-  };
-  localStorage.setItem("seo-mvp-brand", JSON.stringify(state.brand));
-  applyBrand();
-});
+function toolInitial(title) {
+  return String(title || "?").split(/\s+/).map(word => word[0]).join("").slice(0, 2).toUpperCase();
+}
 
 function escapeHtml(value) {
-  return String(value)
+  return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")

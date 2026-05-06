@@ -225,6 +225,10 @@ function serveStatic(req, res) {
       ext === ".html" ? "text/html" :
       ext === ".css" ? "text/css" :
       ext === ".js" ? "text/javascript" :
+      ext === ".png" ? "image/png" :
+      ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" :
+      ext === ".webp" ? "image/webp" :
+      ext === ".svg" ? "image/svg+xml" :
       "application/octet-stream";
     res.writeHead(200, { "Content-Type": type });
     res.end(data);
@@ -1299,6 +1303,7 @@ async function handleClientSave(req, res) {
     const client = {
       id,
       name: fields.name || "",
+      pod: fields.pod || existing?.pod || "",
       domain: fields.domain || "",
       specialty: fields.specialty || "",
       cmsPlatform: fields.cmsPlatform || "other",

@@ -7,41 +7,131 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="app-header">
-      <div>
-        <p class="eyebrow">Internal SEO Automation</p>
-        <h1 id="brandTitle">National Positions SEO Solutions</h1>
-      </div>
-      <button id="settingsButton" class="icon-button" title="Brand settings">Settings</button>
-    </header>
+    <main id="app">
+      <section id="welcomeView" class="view welcome-view">
+        <div class="welcome-panel">
+          <img class="brand-logo" src="national-positions-logo.png" alt="National Positions" />
+          <p class="eyebrow">Internal SEO Automation</p>
+          <h1>SEO Solutions</h1>
+          <p class="lede">Client-first workflows for technical SEO cleanup, redirects, keyword expansion, and implementation-ready exports.</p>
+          <button id="enterAppButton" class="primary-button" type="button">Enter Dashboard</button>
+        </div>
+      </section>
 
-    <main class="shell">
-      <section class="workspace">
-        <aside class="sidebar">
-          <section class="history-panel client-panel">
-            <h2>Clients</h2>
-            <select id="clientSelect">
-              <option value="">New or unsaved client</option>
-            </select>
-            <button id="clientDialogButton" type="button" class="secondary-button">Add / Edit Client</button>
-            <div id="clientSummary" class="client-summary"></div>
-          </section>
-          <div class="tool-list" id="toolList"></div>
-          <section class="history-panel">
-            <h2>Recent Runs</h2>
-            <div id="historyList" class="history-list"></div>
-          </section>
-        </aside>
+      <section id="loginView" class="view login-view" hidden>
+        <div class="login-card">
+          <img class="login-logo" src="national-positions-logo.png" alt="National Positions" />
+          <h1>Welcome Back</h1>
+          <p>Sign in to organize client SEO workflows by Pod.</p>
+          <button id="googleLoginButton" class="google-button" type="button">
+            <span>G</span>
+            Continue with Google
+          </button>
+          <small>Phase 2 uses login UI only. Real Google Auth comes later.</small>
+        </div>
+      </section>
 
-        <section class="tool-panel">
-          <div class="tool-heading">
+      <section id="dashboardView" class="view app-shell" hidden>
+        <header class="app-header">
+          <div class="brand-lockup">
+            <img src="national-positions-logo.png" alt="National Positions" />
+            <div>
+              <p class="eyebrow">Internal SEO Automation</p>
+              <h1>SEO Solutions</h1>
+            </div>
+          </div>
+          <div class="user-pill">
+            <span id="userInitials">NP</span>
+            <strong id="userLabel">National Positions User</strong>
+          </div>
+        </header>
+
+        <div class="dashboard-layout">
+          <section class="dashboard-main">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Client Dashboard</p>
+                <h2>Choose a Client</h2>
+              </div>
+              <button id="addClientDashboard" class="primary-button" type="button">Add Client</button>
+            </div>
+
+            <div class="dashboard-controls">
+              <label>
+                Search
+                <input id="clientSearch" placeholder="Search client, domain, specialty..." />
+              </label>
+              <label>
+                Pod
+                <select id="podFilter">
+                  <option value="">All Pods</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="clientCards" class="client-grid"></div>
+          </section>
+
+          <aside class="dashboard-side">
+            <section class="metric-panel">
+              <span id="clientMetric">0</span>
+              <strong>Clients</strong>
+            </section>
+            <section class="metric-panel">
+              <span id="podMetric">0</span>
+              <strong>Pods</strong>
+            </section>
+            <section class="history-panel">
+              <h2>Recent Runs</h2>
+              <div id="historyList" class="history-list"></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section id="clientView" class="view app-shell" hidden>
+        <header class="app-header compact-header">
+          <button id="backToDashboard" class="ghost-button" type="button">Back to Dashboard</button>
+          <div class="brand-lockup">
+            <img src="national-positions-logo.png" alt="National Positions" />
+            <div>
+              <p class="eyebrow">Client Workspace</p>
+              <h1 id="clientPageTitle">Client</h1>
+            </div>
+          </div>
+          <button id="editClientButton" class="secondary-button" type="button">Edit Client</button>
+        </header>
+
+        <div class="client-layout">
+          <section class="client-profile-card">
+            <div id="clientDetailSummary"></div>
+          </section>
+          <section class="tool-launcher">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Tools</p>
+                <h2>Run a Workflow</h2>
+              </div>
+            </div>
+            <div id="clientToolCards" class="tool-grid"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="toolView" class="view app-shell" hidden>
+        <header class="app-header compact-header">
+          <button id="backToClient" class="ghost-button" type="button">Back to Client</button>
+          <div class="brand-lockup">
+            <img src="national-positions-logo.png" alt="National Positions" />
             <div>
               <p id="toolPrompt" class="eyebrow"></p>
-              <h2 id="toolTitle">Choose a Tool</h2>
+              <h1 id="toolTitle">Choose a Tool</h1>
             </div>
-            <span id="rowCount" class="status-pill">No run yet</span>
           </div>
+          <span id="rowCount" class="status-pill">No run yet</span>
+        </header>
 
+        <main class="tool-workspace">
           <form id="runForm" class="run-form">
             <div class="field-grid">
               <label id="workflowField">
@@ -61,7 +151,7 @@
               </label>
               <label>
                 Specialty
-                <input name="clientSpecialty" placeholder="roofing, industrial siding, dental implants..." />
+                <input name="clientSpecialty" placeholder="roofing, industrial siding..." />
               </label>
               <label>
                 CMS Platform
@@ -130,35 +220,9 @@
           <section class="table-wrap">
             <table id="resultsTable"></table>
           </section>
-        </section>
+        </main>
       </section>
     </main>
-
-    <dialog id="settingsDialog">
-      <form method="dialog" class="settings-form">
-        <h2>White-Label Settings</h2>
-        <label>
-          Agency Name
-          <input id="agencyName" />
-        </label>
-        <label>
-          Product Name
-          <input id="productName" />
-        </label>
-        <label>
-          Primary Color
-          <input id="primaryColor" type="color" />
-        </label>
-        <label>
-          Secondary Color
-          <input id="secondaryColor" type="color" />
-        </label>
-        <menu>
-          <button value="cancel" class="secondary-button">Cancel</button>
-          <button id="saveBrand" value="default" class="primary-button">Save</button>
-        </menu>
-      </form>
-    </dialog>
 
     <dialog id="clientDialog">
       <form id="clientForm" class="settings-form">
@@ -168,6 +232,11 @@
           <label>
             Client Name
             <input name="name" id="profileName" required />
+          </label>
+          <label>
+            Pod
+            <input name="pod" id="profilePod" list="podOptions" placeholder="Pod 1, Enterprise, Local..." />
+            <datalist id="podOptions"></datalist>
           </label>
           <label>
             Domain
@@ -205,11 +274,11 @@
         <div class="field-grid dialog-grid">
           <label>
             Primary Brand Color
-            <input name="primaryColor" id="profilePrimary" type="color" value="#004b8d" />
+            <input name="primaryColor" id="profilePrimary" type="color" value="#003a5d" />
           </label>
           <label>
             Secondary Brand Color
-            <input name="secondaryColor" id="profileSecondary" type="color" value="#17a2a4" />
+            <input name="secondaryColor" id="profileSecondary" type="color" value="#ed1c24" />
           </label>
         </div>
         <label>
