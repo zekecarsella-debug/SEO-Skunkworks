@@ -64,6 +64,7 @@ const copyCsvButton = document.querySelector("#copyCsvButton");
 const csvPreview = document.querySelector("#csvPreview");
 const aiHelp = document.querySelector("#aiHelp");
 const loginHelp = document.querySelector("#loginHelp");
+const googleLoginText = document.querySelector("#googleLoginText");
 
 async function init() {
   const [meResponse, configResponse, clientsResponse] = await Promise.all([
@@ -90,9 +91,10 @@ function renderAll() {
 }
 
 function renderAuthUi() {
+  googleLoginText.textContent = state.me.authConfigured ? "Continue with Google" : "Continue in Dev Mode";
   loginHelp.textContent = state.me.authConfigured
     ? `Sign in with an approved ${state.me.allowedEmailDomain || "National Positions"} Google account.`
-    : "Google OAuth is not configured locally, so this button opens the dashboard for development.";
+    : "OAuth is installed but not active. Add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET, and GOOGLE_REDIRECT_URI to .env locally or Render env vars.";
   aiHelp.textContent = state.me.aiConfigured
     ? `Runs deterministic logic first, then sends up to ${state.me.aiMaxRows || 60} judgment-heavy rows to OpenAI (${state.me.aiModel}).`
     : `OpenAI is not configured locally. If enabled, this will safely fall back to deterministic output. Target model: ${state.me.aiModel || "gpt-5.3"}.`;
