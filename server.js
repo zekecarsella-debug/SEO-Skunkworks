@@ -61,6 +61,13 @@ const toolConfigs = {
       "Write concise, unique image alt text from the image URL, filename, source page, and client context. Reuse one caption for duplicate image URLs.",
     requiredFiles: ["Screaming Frog images missing alt text inlinks CSV/XLSX"],
     exportColumns: ["Image URL", "Alt Text", "Source URLs", "Status", "Confidence", "Reason"]
+  },
+  canonicalFixes: {
+    title: "Canonical Fixes",
+    prompt:
+      "Review Screaming Frog canonicalised URLs and flag indexable content pages that should use self-referencing canonicals.",
+    requiredFiles: ["Screaming Frog canonicalised URLs CSV/XLSX"],
+    exportColumns: ["URL", "Canonical", "New Canonical", "Status: "]
   }
 };
 
@@ -430,7 +437,8 @@ function rowHeaderScore(headers, tool, context = {}) {
       : context.workflow === "additional"
         ? ["topqueries", "query", "queries", "clicks", "impressions", "ctr", "position", "averageposition"]
         : ["keyword", "searchterm", "query", "position", "volume", "searchvolume", "rankingurl", "intent"],
-    altText: ["image", "imageurl", "source", "sourceurl", "alttext", "inlinks"]
+    altText: ["image", "imageurl", "source", "sourceurl", "alttext", "inlinks"],
+    canonicalFixes: ["address", "url", "canonical", "canonicalurl", "canonicallinkelement", "indexability", "statuscode"]
   }[tool] || ["url", "keyword", "source", "destination", "image"];
   return candidates.reduce((score, candidate) => score + (joined.includes(normalize(candidate)) ? 1 : 0), 0);
 }
@@ -964,6 +972,107 @@ function keywordAdditionalSheets(rows) {
   }));
 }
 
+function runCanonicalFixes(rows) {
+  return rows.map(row => {
+    const url = value(row, ["URL", "Address", "Original URL", "Page URL"]);
+    const canonical = value(row, [
+      "Canonical",
+      "Canonical URL",
+      "Canonical Link Element",
+      "Canonical Link Element 1",
+      "Canonical Link Element 1 Address",
+      "Canonicalised To"
+    ]);
+    const indexability = value(row, ["Indexability", "Indexability Status"]);
+    const statusCode = value(row, ["Status Code", "HTTP Status", "Status"]);
+    const judgment = canonicalJudgment(url, canonical, indexability, statusCode);
+    return {
+      URL: url,
+      Canonical: canonical,
+      "New Canonical": judgment.shouldFix ? url : "",
+      "Status: ": judgment.shouldFix ? "Pending" : "Review / No Change",
+      Decision: judgment.shouldFix ? "Fix to self-referencing" : "Do not change automatically",
+      Confidence: judgment.confidence,
+      Reason: judgment.reason
+    };
+  }).filter(row => row.URL && row.Canonical);
+}
+
+function formatCanonicalRowsForExport(rows) {
+  return rows.filter(row => row.Decision === "Fix to self-referencing").map(row => ({
+    URL: row.URL,
+    Canonical: row.Canonical,
+    "New Canonical": row["New Canonical"],
+    "Status: ": row["Status: "]
+  }));
+}
+
+function canonicalJudgment(url, canonical, indexability = "", statusCode = "") {
+  if (!url || !canonical) return { shouldFix: false, confidence: "Low", reason: "Missing URL or canonical value." };
+  if (sameCanonicalTarget(url, canonical)) {
+    return { shouldFix: false, confidence: "High", reason: "Already appears self-referencing after normalization." };
+  }
+  if (/non[-\s]?indexable|noindex|canonicalised|redirect/i.test(indexability)) {
+    return { shouldFix: false, confidence: "Medium", reason: "Screaming Frog marks this row as non-indexable or intentionally canonicalised." };
+  }
+  if (statusCode && !/^2\d\d(?:\.0)?$/.test(String(statusCode).trim())) {
+    return { shouldFix: false, confidence: "High", reason: "URL does not appear to be a clean 200-status page." };
+  }
+  if (isLikelyCanonicalDuplicate(url)) {
+    return { shouldFix: false, confidence: "High", reason: "Likely duplicate URL variant, pagination, parameter, feed, print, or filtered page." };
+  }
+  if (isFileOrImageUrl(url)) {
+    return { shouldFix: false, confidence: "High", reason: "File assets should not be bulk changed to self-referencing canonicals." };
+  }
+  if (canonicalLooksLikeParent(url, canonical)) {
+    return { shouldFix: false, confidence: "Medium", reason: "Canonical appears to point to a parent/category page, which may be intentional." };
+  }
+  return { shouldFix: true, confidence: "Medium", reason: "Clean content URL with a different canonical; likely should self-reference." };
+}
+
+function sameCanonicalTarget(a, b) {
+  return canonicalCompareUrl(a) === canonicalCompareUrl(b);
+}
+
+function canonicalCompareUrl(input) {
+  try {
+    const parsed = new URL(input);
+    const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    const path = parsed.pathname.replace(/\/index\.(html?|php)$/i, "/").replace(/\/+$/, "") || "/";
+    return `${host}${path}${parsed.search}`.toLowerCase();
+  } catch {
+    return String(input || "").replace(/\/+$/, "").toLowerCase();
+  }
+}
+
+function isLikelyCanonicalDuplicate(input) {
+  try {
+    const url = new URL(input);
+    const path = url.pathname.toLowerCase();
+    const params = [...url.searchParams.keys()].map(key => key.toLowerCase());
+    return /\/page\/\d+\/?$/.test(path) ||
+      /\/(feed|amp|print|replytocom)(\/|$)/.test(path) ||
+      params.some(param => /^(p|page|paged|sort|filter|orderby|order|view|variant|utm_|gclid|fbclid|replytocom|s|search)/.test(param));
+  } catch {
+    return /\/page\/\d+\/?|\?|\/feed\/?$|\/amp\/?$/i.test(String(input || ""));
+  }
+}
+
+function canonicalLooksLikeParent(url, canonical) {
+  try {
+    const source = new URL(url);
+    const target = new URL(canonical, source.origin);
+    const sourceParts = source.pathname.split("/").filter(Boolean);
+    const targetParts = target.pathname.split("/").filter(Boolean);
+    return source.origin === target.origin &&
+      targetParts.length > 0 &&
+      sourceParts.length > targetParts.length &&
+      targetParts.every((part, index) => sourceParts[index] === part);
+  } catch {
+    return false;
+  }
+}
+
 function categoryFromKeyword(keyword, specialty) {
   const words = tokens(keyword).filter(word => !["near", "best", "service", "services", "company", "companies"].includes(word));
   if (words.length >= 2) return titleCase(words.slice(0, 2).join(" "));
@@ -1214,6 +1323,8 @@ function validate(tool, rows, sitemap, context = {}) {
   if (tool === "redirects404" && !headers.some(h => /url|address|page|submitted/i.test(h))) issues.push("Could not identify a 404 URL column.");
   if (tool === "brokenLinks" && !headers.some(h => /destination|link|url|address/i.test(h))) issues.push("Could not identify a broken destination URL column.");
   if (tool === "altText" && !headers.some(h => /image|destination|address/i.test(h))) issues.push("Could not identify an image URL column.");
+  if (tool === "canonicalFixes" && !headers.some(h => /url|address/i.test(h))) issues.push("Could not identify a URL column.");
+  if (tool === "canonicalFixes" && !headers.some(h => /canonical/i.test(h))) issues.push("Could not identify a canonical column.");
   if (tool === "keywordResearch") {
     const hasKeywordColumn = headers.some(h => /keyword|query|queries|search|top queries/i.test(h));
     const hasGscMetrics = headers.some(h => /^clicks$/i.test(h)) && headers.some(h => /^impressions$/i.test(h));
@@ -1253,11 +1364,13 @@ async function handleRun(req, res) {
       tool === "brokenLinks" ? runBrokenLinks(rows, sitemap, client) :
       tool === "redirects404" ? runRedirects(rows, sitemap, client) :
       tool === "keywordResearch" ? runKeywordResearch(rows, sitemap, client, keywordWorkflow, templateRows) :
+      tool === "canonicalFixes" ? runCanonicalFixes(rows) :
       runAltText(rows, sitemap, client);
     const exportRows =
       tool === "redirects404" ? formatRedirectRowsForPlatform(results, client.cmsPlatform) :
       tool === "brokenLinks" ? formatBrokenLinkRowsForExport(results) :
       tool === "keywordResearch" ? formatKeywordRowsForExport(results, keywordWorkflow) :
+      tool === "canonicalFixes" ? formatCanonicalRowsForExport(results) :
       tool === "altText" ? formatAltTextRowsForExport(results) :
       results;
     const exportSheets = tool === "keywordResearch" && keywordWorkflow === "additional"
@@ -1272,7 +1385,7 @@ async function handleRun(req, res) {
       exportRows,
       exportColumns: Object.keys(exportRows[0] || {}),
       exportSheets,
-      exportFormat: tool === "keywordResearch" ? "xls" : undefined,
+      exportFormat: tool === "keywordResearch" || tool === "canonicalFixes" ? "xls" : undefined,
       generatedAt: new Date().toISOString()
     });
   } catch (error) {
@@ -1389,6 +1502,8 @@ module.exports = {
   runRedirects,
   formatRedirectRowsForPlatform,
   runKeywordResearch,
+  runCanonicalFixes,
+  formatCanonicalRowsForExport,
   runAltText,
   formatAltTextRowsForExport,
   isReviewed,

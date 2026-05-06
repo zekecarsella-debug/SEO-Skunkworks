@@ -563,7 +563,7 @@ exportButton.addEventListener("click", () => {
     setMessage("There are no exportable rows. Excluded rows are intentionally omitted.", true);
     return;
   }
-  const format = state.activeTool === "brokenLinks" || state.activeTool === "keywordResearch" ? "xls" : "csv";
+  const format = ["brokenLinks", "keywordResearch", "canonicalFixes"].includes(state.activeTool) ? "xls" : "csv";
   const filename = `${state.configs[state.activeTool].title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}.${format}`;
   downloadExport(exportColumns, exportRows, filename, format, state.exportSheets || null);
 });

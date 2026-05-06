@@ -10,6 +10,8 @@ const {
   runRedirects,
   formatRedirectRowsForPlatform,
   runKeywordResearch,
+  runCanonicalFixes,
+  formatCanonicalRowsForExport,
   runAltText,
   formatAltTextRowsForExport,
   isReviewed,
@@ -290,6 +292,37 @@ test("additional keyword research separates existing and new GSC queries", () =>
   assert.equal(results[0].Sheet, "Expansion Needs Improvement");
   assert.equal(results[1].Sheet, "New Keywords to Add");
   assert.equal(results[0]["Current Expansion Status"], "Already in Keyword Expansion");
+});
+
+test("canonical fixes export only likely self-referencing fixes", () => {
+  const rows = [
+    {
+      Address: "https://example.com/products/cement-siding/",
+      "Canonical Link Element 1": "https://example.com/products/old-cement-siding/",
+      "Status Code": "200"
+    },
+    {
+      Address: "https://example.com/blog/page/2/",
+      "Canonical Link Element 1": "https://example.com/blog/",
+      "Status Code": "200"
+    },
+    {
+      Address: "https://example.com/products/cement-siding/?sort=price",
+      "Canonical Link Element 1": "https://example.com/products/cement-siding/",
+      "Status Code": "200"
+    }
+  ];
+  const results = runCanonicalFixes(rows);
+  assert.equal(results[0].Decision, "Fix to self-referencing");
+  assert.equal(results[0]["New Canonical"], "https://example.com/products/cement-siding/");
+  assert.equal(results[1].Decision, "Do not change automatically");
+  assert.equal(results[2].Decision, "Do not change automatically");
+  assert.deepEqual(formatCanonicalRowsForExport(results), [{
+    URL: "https://example.com/products/cement-siding/",
+    Canonical: "https://example.com/products/old-cement-siding/",
+    "New Canonical": "https://example.com/products/cement-siding/",
+    "Status: ": "Pending"
+  }]);
 });
 
 test("alt text deduplicates image URLs", () => {
