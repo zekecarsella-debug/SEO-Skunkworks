@@ -1,6 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 3000);
@@ -9,6 +10,11 @@ const DATA_DIR = path.join(__dirname, "data");
 const CLIENTS_FILE = path.join(DATA_DIR, "clients.json");
 const CLIENT_ASSET_DIR = path.join(DATA_DIR, "client-assets");
 const EXPORT_DIR = path.join(DATA_DIR, "exports");
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.3";
+const OPENAI_MAX_ROWS = Number(process.env.OPENAI_MAX_ROWS || 60);
+const OPENAI_BATCH_SIZE = Number(process.env.OPENAI_BATCH_SIZE || 20);
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 45000);
+const ALLOWED_EMAIL_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN || "nationalpositions.com";
 const RUNTIME_NODE_MODULES =
   process.env.NODE_REPL_NODE_MODULE_DIRS ||
   "C:\\Users\\Zeke\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\node_modules";
@@ -74,6 +80,76 @@ const toolConfigs = {
 function sendJson(res, status, payload) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(payload));
+}
+
+function setCookie(res, name, value, options = {}) {
+  const parts = [`${name}=${value}`, "Path=/", "HttpOnly", "SameSite=Lax"];
+  if (options.maxAge !== undefined) parts.push(`Max-Age=${options.maxAge}`);
+  if (options.secure) parts.push("Secure");
+  res.setHeader("Set-Cookie", [...cookieHeaders(res), parts.join("; ")]);
+}
+
+function clearCookie(res, name) {
+  setCookie(res, name, "", { maxAge: 0 });
+}
+
+function cookieHeaders(res) {
+  const existing = res.getHeader("Set-Cookie");
+  if (!existing) return [];
+  return Array.isArray(existing) ? existing : [existing];
+}
+
+function parseCookies(req) {
+  return Object.fromEntries(String(req.headers.cookie || "").split(";").map(item => {
+    const index = item.indexOf("=");
+    if (index === -1) return ["", ""];
+    return [item.slice(0, index).trim(), decodeURIComponent(item.slice(index + 1).trim())];
+  }).filter(([key]) => key));
+}
+
+function authConfigured() {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.SESSION_SECRET);
+}
+
+function aiConfigured() {
+  return Boolean(process.env.OPENAI_API_KEY);
+}
+
+function base64url(input) {
+  return Buffer.from(input).toString("base64url");
+}
+
+function sign(value) {
+  return crypto.createHmac("sha256", process.env.SESSION_SECRET || "dev-session-secret").update(value).digest("base64url");
+}
+
+function signedToken(payload) {
+  const body = base64url(JSON.stringify(payload));
+  return `${body}.${sign(body)}`;
+}
+
+function verifySignedToken(token) {
+  const [body, signature] = String(token || "").split(".");
+  if (!body || !signature || sign(body) !== signature) return null;
+  try {
+    return JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function currentUser(req) {
+  if (!authConfigured()) return { authenticated: true, devMode: true, name: "National Positions User", email: "dev@nationalpositions.com" };
+  const session = verifySignedToken(parseCookies(req).np_session);
+  if (!session?.email) return null;
+  return { authenticated: true, name: session.name || session.email, email: session.email, picture: session.picture || "" };
+}
+
+function requireAuth(req, res) {
+  const user = currentUser(req);
+  if (user) return user;
+  sendJson(res, 401, { error: "Authentication required." });
+  return null;
 }
 
 function sendCsv(res, filename, columns, rows) {
@@ -1304,6 +1380,149 @@ function cleanAlt(text) {
   return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
+async function refineWithAi({ tool, results, client, keywordWorkflow }) {
+  const candidates = aiCandidates(tool, results).slice(0, OPENAI_MAX_ROWS);
+  if (!candidates.length) return aiUsageSummary("no_candidates", tool, results, candidates);
+  if (!aiConfigured()) return aiUsageSummary("skipped_missing_key", tool, results, candidates);
+  const usage = aiUsageSummary("attempted", tool, results, candidates);
+  usage.model = OPENAI_MODEL;
+  try {
+    for (let i = 0; i < candidates.length; i += OPENAI_BATCH_SIZE) {
+      const batch = candidates.slice(i, i + OPENAI_BATCH_SIZE);
+      const response = await callOpenAiJson({
+        tool,
+        client,
+        keywordWorkflow,
+        rows: batch.map(item => ({ index: item.index, row: compactAiRow(tool, item.row) }))
+      });
+      applyAiPatches(results, response.patches || []);
+      usage.batches += 1;
+      usage.inputTokens += response.usage?.input_tokens || response.usage?.prompt_tokens || 0;
+      usage.outputTokens += response.usage?.output_tokens || response.usage?.completion_tokens || 0;
+    }
+    usage.status = "completed";
+  } catch (error) {
+    usage.status = "failed_fallback_deterministic";
+    usage.error = error.message;
+  }
+  usage.completedAt = new Date().toISOString();
+  return usage;
+}
+
+function aiUsageSummary(status, tool, results, candidates) {
+  return {
+    status,
+    tool,
+    model: OPENAI_MODEL,
+    eligibleRows: candidates.length,
+    totalRows: results.length,
+    maxRows: OPENAI_MAX_ROWS,
+    batchSize: OPENAI_BATCH_SIZE,
+    batches: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    requestedAt: new Date().toISOString()
+  };
+}
+
+function aiCandidates(tool, results) {
+  return results.map((row, index) => ({ row, index })).filter(({ row }) => {
+    if (tool === "redirects404") return row.Status !== "Excluded" && row.Confidence !== "High";
+    if (tool === "brokenLinks") return row.Confidence !== "High" && !/^check source/i.test(row["Remove/Replace"] || "");
+    if (tool === "altText") return !isReviewed(row);
+    if (tool === "keywordResearch") return row.Priority === "High" || row.Confidence !== "High";
+    if (tool === "canonicalFixes") return row.Confidence !== "High";
+    return false;
+  });
+}
+
+function compactAiRow(tool, row) {
+  const fields = {
+    redirects404: ["Source URL", "Redirect URL", "Confidence", "Reason", "Status"],
+    brokenLinks: ["Source URL", "Destination", "Anchor", "Remove/Replace", "Replacement URL", "Confidence", "Reason", "Notes"],
+    altText: ["Image URL", "Filename", "Source Context", "Page Category", "Alt Text", "Source URLs", "Reason"],
+    keywordResearch: ["Keyword", "Keyword/Query", "Type", "Category", "Google Search Ranking", "Average Search Volume", "Ranking URL", "Preferred Page", "Priority", "Issue / Opportunity", "Recommended Action"],
+    canonicalFixes: ["URL", "Canonical", "New Canonical", "Status: ", "Decision", "Confidence", "Reason"]
+  }[tool] || Object.keys(row);
+  const compact = {};
+  fields.forEach(field => {
+    if (row[field] !== undefined && row[field] !== "") compact[field] = row[field];
+  });
+  return compact;
+}
+
+async function callOpenAiJson(payload) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        input: [
+          {
+            role: "system",
+            content: "You are an SEO operations assistant. Return only valid JSON with a patches array. Each patch must include index and updates. Do not invent URLs. Keep export schemas clean."
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              instructions: aiInstructions(payload.tool, payload.keywordWorkflow),
+              client: payload.client,
+              rows: payload.rows,
+              responseShape: { patches: [{ index: 0, updates: { Field: "new value" } }] }
+            })
+          }
+        ]
+      })
+    });
+    const json = await response.json();
+    if (!response.ok) throw new Error(json.error?.message || `OpenAI request failed with ${response.status}.`);
+    return { ...parseAiJson(json), usage: json.usage || {} };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function aiInstructions(tool, keywordWorkflow) {
+  const common = "Improve only rows that need SEO judgment. Preserve implementation-ready values. Return concise updates only.";
+  const instructions = {
+    redirects404: "Review redirect targets for contextual similarity. Prefer specific sitemap-like targets over homepage fallbacks when the row already contains a plausible candidate. Do not invent destination URLs.",
+    brokenLinks: "Review remove/replace decisions. Choose Replace only for strong intent matches; otherwise choose Remove. Do not invent exact replacement URLs.",
+    altText: "Improve alt text using filename, source context, image URL, and client specialty. Keep alt text concise, natural, non-spammy, and reusable for duplicate image URLs.",
+    keywordResearch: keywordWorkflow === "additional"
+      ? "Improve categories, priority, issue/opportunity, and recommended action for GSC keyword opportunities. Do not invent missing metrics."
+      : "Improve keyword type, category, priority, and preferred page judgment. Do not invent missing metrics.",
+    canonicalFixes: "Review whether each URL should self-canonicalize. Pagination, filtered URLs, parent canonical patterns, and file assets usually should not be changed."
+  };
+  return `${common} ${instructions[tool] || ""}`;
+}
+
+function parseAiJson(response) {
+  const text = response.output_text ||
+    response.output?.flatMap(item => item.content || []).map(part => part.text || "").join("") ||
+    "";
+  const cleaned = text.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+  const parsed = JSON.parse(cleaned || "{}");
+  return { patches: Array.isArray(parsed.patches) ? parsed.patches : [] };
+}
+
+function applyAiPatches(results, patches) {
+  for (const patch of patches) {
+    const index = Number(patch.index);
+    if (!Number.isInteger(index) || !results[index] || !patch.updates || typeof patch.updates !== "object") continue;
+    for (const [key, value] of Object.entries(patch.updates)) {
+      if (key in results[index] && value !== undefined && value !== null) results[index][key] = String(value);
+    }
+    results[index].AI = "Refined";
+  }
+}
+
 function titleCase(text) {
   return String(text || "")
     .split(/\s+/)
@@ -1360,12 +1579,15 @@ async function handleRun(req, res) {
     const templateRows = templateFile ? await parseUpload(templateFile, "keywordResearch", { source: "template", workflow: keywordWorkflow }) : [];
     const validation = validate(tool, rows, sitemap, tool === "keywordResearch" ? { workflow: keywordWorkflow } : {});
     if (validation.issues.length) return sendJson(res, 422, { error: "Input validation failed.", validation });
-    const results =
+    let results =
       tool === "brokenLinks" ? runBrokenLinks(rows, sitemap, client) :
       tool === "redirects404" ? runRedirects(rows, sitemap, client) :
       tool === "keywordResearch" ? runKeywordResearch(rows, sitemap, client, keywordWorkflow, templateRows) :
       tool === "canonicalFixes" ? runCanonicalFixes(rows) :
       runAltText(rows, sitemap, client);
+    const aiUsage = fields.aiRefinement === "on"
+      ? await refineWithAi({ tool, results, client, keywordWorkflow })
+      : aiUsageSummary("disabled", tool, results, []);
     const exportRows =
       tool === "redirects404" ? formatRedirectRowsForPlatform(results, client.cmsPlatform) :
       tool === "brokenLinks" ? formatBrokenLinkRowsForExport(results) :
@@ -1386,6 +1608,7 @@ async function handleRun(req, res) {
       exportColumns: Object.keys(exportRows[0] || {}),
       exportSheets,
       exportFormat: tool === "keywordResearch" || tool === "canonicalFixes" ? "xls" : undefined,
+      aiUsage,
       generatedAt: new Date().toISOString()
     });
   } catch (error) {
@@ -1464,6 +1687,101 @@ async function handleExport(req, res) {
   }
 }
 
+function authRedirectUri(req) {
+  return process.env.GOOGLE_REDIRECT_URI || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers.host}/auth/google/callback`;
+}
+
+function handleGoogleStart(req, res) {
+  if (!authConfigured()) {
+    res.writeHead(501, { "Content-Type": "text/plain" });
+    res.end("Google OAuth is not configured. Add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET, and GOOGLE_REDIRECT_URI.");
+    return;
+  }
+  const state = crypto.randomBytes(24).toString("base64url");
+  setCookie(res, "np_oauth_state", signedToken({ state, createdAt: Date.now() }), { maxAge: 600, secure: isSecureRequest(req) });
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID);
+  url.searchParams.set("redirect_uri", authRedirectUri(req));
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "openid email profile");
+  url.searchParams.set("state", state);
+  url.searchParams.set("prompt", "select_account");
+  res.writeHead(302, { Location: url.toString() });
+  res.end();
+}
+
+async function handleGoogleCallback(req, res) {
+  try {
+    if (!authConfigured()) throw new Error("Google OAuth is not configured.");
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const stateCookie = verifySignedToken(parseCookies(req).np_oauth_state);
+    if (!stateCookie?.state || stateCookie.state !== url.searchParams.get("state")) throw new Error("OAuth state did not match.");
+    const code = url.searchParams.get("code");
+    if (!code) throw new Error("Missing Google OAuth code.");
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: authRedirectUri(req),
+        grant_type: "authorization_code"
+      })
+    });
+    const tokenJson = await tokenResponse.json();
+    if (!tokenResponse.ok) throw new Error(tokenJson.error_description || "Google token exchange failed.");
+    const userResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+      headers: { Authorization: `Bearer ${tokenJson.access_token}` }
+    });
+    const user = await userResponse.json();
+    if (!userResponse.ok || !user.email) throw new Error("Could not read Google user profile.");
+    if (!emailAllowed(user.email)) throw new Error(`This app is limited to ${ALLOWED_EMAIL_DOMAIN} accounts.`);
+    setCookie(res, "np_session", signedToken({
+      email: user.email,
+      name: user.name || user.email,
+      picture: user.picture || "",
+      createdAt: Date.now()
+    }), { maxAge: 60 * 60 * 24 * 7, secure: isSecureRequest(req) });
+    clearCookie(res, "np_oauth_state");
+    res.writeHead(302, { Location: "/" });
+    res.end();
+  } catch (error) {
+    res.writeHead(401, { "Content-Type": "text/plain" });
+    res.end(error.message);
+  }
+}
+
+function handleLogout(req, res) {
+  clearCookie(res, "np_session");
+  res.writeHead(302, { Location: "/" });
+  res.end();
+}
+
+function handleMe(req, res) {
+  const user = currentUser(req);
+  sendJson(res, 200, {
+    authenticated: Boolean(user),
+    authConfigured: authConfigured(),
+    user,
+    aiConfigured: aiConfigured(),
+    aiModel: OPENAI_MODEL,
+    aiMaxRows: OPENAI_MAX_ROWS,
+    aiBatchSize: OPENAI_BATCH_SIZE,
+    allowedEmailDomain: ALLOWED_EMAIL_DOMAIN
+  });
+}
+
+function emailAllowed(email) {
+  const allowlist = String(process.env.ALLOWED_EMAILS || "").split(",").map(item => item.trim().toLowerCase()).filter(Boolean);
+  const normalized = String(email || "").toLowerCase();
+  return allowlist.includes(normalized) || normalized.endsWith(`@${ALLOWED_EMAIL_DOMAIN.toLowerCase()}`);
+}
+
+function isSecureRequest(req) {
+  return req.headers["x-forwarded-proto"] === "https";
+}
+
 function safeDownloadName(filename, format) {
   const ext = `.${format}`;
   const cleaned = String(filename || `export${ext}`)
@@ -1475,9 +1793,14 @@ function safeDownloadName(filename, format) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (req.method === "GET" && url.pathname === "/auth/google") return handleGoogleStart(req, res);
+  if (req.method === "GET" && url.pathname === "/auth/google/callback") return handleGoogleCallback(req, res);
+  if (req.method === "GET" && url.pathname === "/auth/logout") return handleLogout(req, res);
+  if (req.method === "GET" && url.pathname === "/api/me") return handleMe(req, res);
   if (req.method === "GET" && url.pathname.startsWith("/client-assets/")) return serveClientAsset(req, res);
   if (req.method === "GET" && url.pathname.startsWith("/exports/")) return serveExport(req, res);
   if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, toolConfigs);
+  if (url.pathname.startsWith("/api/") && !requireAuth(req, res)) return;
   if (req.method === "GET" && url.pathname === "/api/clients") return sendJson(res, 200, readClients());
   if (req.method === "POST" && url.pathname === "/api/clients") return handleClientSave(req, res);
   if (req.method === "POST" && url.pathname === "/api/export") return handleExport(req, res);
@@ -1507,6 +1830,12 @@ module.exports = {
   runAltText,
   formatAltTextRowsForExport,
   isReviewed,
+  aiCandidates,
+  compactAiRow,
+  applyAiPatches,
+  signedToken,
+  verifySignedToken,
+  emailAllowed,
   validate,
   bestMatch,
   toolConfigs

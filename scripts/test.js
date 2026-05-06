@@ -15,6 +15,12 @@ const {
   runAltText,
   formatAltTextRowsForExport,
   isReviewed,
+  aiCandidates,
+  compactAiRow,
+  applyAiPatches,
+  signedToken,
+  verifySignedToken,
+  emailAllowed,
   validate,
   bestMatch,
   toolConfigs
@@ -323,6 +329,34 @@ test("canonical fixes export only likely self-referencing fixes", () => {
     "New Canonical": "https://example.com/products/cement-siding/",
     "Status: ": "Pending"
   }]);
+});
+
+test("AI candidate selection sends only judgment-heavy rows", () => {
+  const redirects = [
+    { Status: "Pending", Confidence: "High", "Source URL": "https://example.com/a" },
+    { Status: "Pending", Confidence: "Low", "Source URL": "https://example.com/b" },
+    { Status: "Excluded", Confidence: "Low", "Source URL": "https://example.com/wp-login.php" }
+  ];
+  assert.deepEqual(aiCandidates("redirects404", redirects).map(item => item.index), [1]);
+  const compact = compactAiRow("redirects404", redirects[1]);
+  assert.deepEqual(Object.keys(compact), ["Source URL", "Confidence", "Status"]);
+});
+
+test("AI patches only update existing row fields", () => {
+  const rows = [{ "Redirect URL": "https://example.com/old", Reason: "deterministic" }];
+  applyAiPatches(rows, [{ index: 0, updates: { "Redirect URL": "https://example.com/new", MadeUp: "ignored" } }]);
+  assert.equal(rows[0]["Redirect URL"], "https://example.com/new");
+  assert.equal(rows[0].MadeUp, undefined);
+  assert.equal(rows[0].AI, "Refined");
+});
+
+test("signed OAuth session tokens verify and reject tampering", () => {
+  process.env.SESSION_SECRET = "test-secret";
+  const token = signedToken({ email: "zeke@nationalpositions.com" });
+  assert.equal(verifySignedToken(token).email, "zeke@nationalpositions.com");
+  assert.equal(verifySignedToken(`${token}tampered`), null);
+  assert.equal(emailAllowed("zeke@nationalpositions.com"), true);
+  assert.equal(emailAllowed("person@example.com"), false);
 });
 
 test("alt text deduplicates image URLs", () => {

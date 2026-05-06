@@ -519,6 +519,31 @@ button:disabled {
   gap: 16px;
 }
 
+.ai-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 14px;
+}
+
+.ai-toggle input {
+  width: auto;
+  margin-top: 3px;
+}
+
+.ai-toggle span {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-toggle small {
+  color: var(--muted);
+  font-weight: 400;
+}
+
 .field-grid,
 .upload-grid {
   display: grid;

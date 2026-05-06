@@ -11,6 +11,7 @@ const state = {
   columns: [],
   history: JSON.parse(localStorage.getItem("seo-mvp-history") || "[]"),
   savedPods: JSON.parse(localStorage.getItem("seo-mvp-pods") || "[]"),
+  me: { authenticated: false, authConfigured: false, aiConfigured: false, aiModel: "gpt-5.3" },
   user: JSON.parse(localStorage.getItem("seo-mvp-user") || "null") || null
 };
 
@@ -61,16 +62,22 @@ const exportPanel = document.querySelector("#exportPanel");
 const manualDownloadLink = document.querySelector("#manualDownloadLink");
 const copyCsvButton = document.querySelector("#copyCsvButton");
 const csvPreview = document.querySelector("#csvPreview");
+const aiHelp = document.querySelector("#aiHelp");
+const loginHelp = document.querySelector("#loginHelp");
 
 async function init() {
-  const [configResponse, clientsResponse] = await Promise.all([
+  const [meResponse, configResponse, clientsResponse] = await Promise.all([
+    fetch("/api/me"),
     fetch("/api/config"),
     fetch("/api/clients")
   ]);
+  state.me = await meResponse.json();
+  if (state.me.user) state.user = state.me.user;
   state.configs = await configResponse.json();
-  state.clients = await clientsResponse.json();
+  state.clients = clientsResponse.ok ? await clientsResponse.json() : [];
+  renderAuthUi();
   renderAll();
-  showView(state.view);
+  showView(state.me.authConfigured && !state.me.authenticated ? "login" : state.view);
 }
 
 function renderAll() {
@@ -82,7 +89,23 @@ function renderAll() {
   selectTool(state.activeTool);
 }
 
+function renderAuthUi() {
+  loginHelp.textContent = state.me.authConfigured
+    ? `Sign in with an approved ${state.me.allowedEmailDomain || "National Positions"} Google account.`
+    : "Google OAuth is not configured locally, so this button opens the dashboard for development.";
+  aiHelp.textContent = state.me.aiConfigured
+    ? `Runs deterministic logic first, then sends up to ${state.me.aiMaxRows || 60} judgment-heavy rows to OpenAI (${state.me.aiModel}).`
+    : `OpenAI is not configured locally. If enabled, this will safely fall back to deterministic output. Target model: ${state.me.aiModel || "gpt-5.3"}.`;
+}
+
+function refreshAiHelp(payload = null) {
+  if (!payload?.aiUsage) return;
+  const usage = payload.aiUsage;
+  aiHelp.textContent = `Last AI status: ${usage.status}. Eligible rows: ${usage.eligibleRows}. Model: ${usage.model}. Tokens: ${usage.inputTokens || 0} in / ${usage.outputTokens || 0} out.`;
+}
+
 function showView(view) {
+  if (state.me.authConfigured && !state.me.authenticated && !["welcome", "login"].includes(view)) view = "login";
   state.view = view;
   Object.entries(views).forEach(([key, element]) => {
     element.hidden = key !== view;
@@ -106,10 +129,8 @@ function renderUser() {
 
 document.querySelector("#enterAppButton").addEventListener("click", () => showView("login"));
 document.querySelector("#googleLoginButton").addEventListener("click", () => {
-  state.user = { name: "National Positions User", provider: "google-ui" };
-  localStorage.setItem("seo-mvp-user", JSON.stringify(state.user));
-  renderUser();
-  showView("dashboard");
+  if (state.me.authConfigured) window.location.href = "/auth/google";
+  else showView("dashboard");
 });
 document.querySelectorAll(".app-header .brand-lockup img").forEach(logo => {
   logo.title = "Back to welcome";
@@ -432,6 +453,7 @@ runForm.addEventListener("submit", async event => {
     saveHistory(payload);
     renderTable();
     renderHistory();
+    refreshAiHelp(payload);
     setMessage(runSummary(payload));
   } catch (error) {
     setMessage(error.message, true);
@@ -453,6 +475,9 @@ function runSummary(payload) {
   const parts = [`Generated ${included.length.toLocaleString()} export-ready recommendations for ${payload.client.name || "this client"}.`];
   if (excluded.length) parts.push(`${excluded.length.toLocaleString()} unsafe infrastructure/asset rows were excluded from export.`);
   if (preview.length) parts.push(`Sanity preview: ${preview.join(" | ")}`);
+  if (payload.aiUsage?.status && payload.aiUsage.status !== "disabled") {
+    parts.push(`AI: ${payload.aiUsage.status}; ${payload.aiUsage.eligibleRows} row${payload.aiUsage.eligibleRows === 1 ? "" : "s"} eligible; ${payload.aiUsage.inputTokens || 0}/${payload.aiUsage.outputTokens || 0} tokens.`);
+  }
   return parts.join(" ");
 }
 

@@ -27,7 +27,7 @@
             <span>G</span>
             Continue with Google
           </button>
-          <small>Phase 2 uses login UI only. Real Google Auth comes later.</small>
+          <small id="loginHelp">Google OAuth is required when configured on the server.</small>
         </div>
       </section>
 
@@ -186,6 +186,14 @@
                 <small>Used for Keyword Expansion comparisons.</small>
               </label>
             </div>
+
+            <label class="ai-toggle">
+              <input name="aiRefinement" type="checkbox" />
+              <span>
+                <strong>Use AI refinement</strong>
+                <small id="aiHelp">Runs deterministic logic first, then sends only judgment-heavy rows to OpenAI.</small>
+              </span>
+            </label>
 
             <div class="form-actions">
               <button type="submit" class="primary-button">Generate Recommendations</button>
