@@ -162,6 +162,8 @@ button {
   padding: 8px 12px 8px 8px;
   background: var(--soft);
   color: var(--primary);
+  cursor: pointer;
+  text-align: left;
 }
 
 .user-pill span {
@@ -173,6 +175,13 @@ button {
   color: white;
   background: var(--secondary);
   font-weight: 800;
+}
+
+.user-pill:hover,
+.user-pill:focus-visible {
+  border-color: rgba(237, 28, 36, 0.45);
+  box-shadow: 0 8px 20px rgba(8, 47, 73, 0.1);
+  outline: none;
 }
 
 .dashboard-layout,

@@ -124,6 +124,7 @@ document.querySelectorAll(".app-header .brand-lockup img").forEach(logo => {
 });
 document.querySelector("#backToDashboard").addEventListener("click", () => showView("dashboard"));
 document.querySelector("#backToClient").addEventListener("click", () => showView(activeClient() ? "client" : "dashboard"));
+document.querySelector("#userDashboardButton").addEventListener("click", () => showView("dashboard"));
 document.querySelector("#addClientDashboard").addEventListener("click", () => openClientDialog(null));
 document.querySelector("#addClientFromList").addEventListener("click", () => {
   clientsListDialog.close();
