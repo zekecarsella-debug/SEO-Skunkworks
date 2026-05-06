@@ -350,12 +350,27 @@ textarea {
   display: grid;
   gap: 4px;
   padding: 18px;
+  text-align: left;
 }
 
 .metric-panel span {
   color: var(--primary);
   font-size: 34px;
   font-weight: 900;
+}
+
+.metric-panel small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.metric-button {
+  cursor: pointer;
+}
+
+.metric-button:hover {
+  border-color: rgba(237, 28, 36, 0.45);
+  box-shadow: 0 12px 28px rgba(8, 47, 73, 0.1);
 }
 
 .history-panel {
@@ -637,6 +652,45 @@ menu {
   gap: 10px;
   margin: 0;
   padding: 0;
+}
+
+.dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.management-list {
+  display: grid;
+  gap: 10px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.management-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 12px;
+}
+
+.management-item div {
+  display: grid;
+  gap: 3px;
+}
+
+.management-item strong {
+  color: var(--primary);
+}
+
+.management-item span {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 @media (max-width: 1050px) {

@@ -73,14 +73,16 @@
           </section>
 
           <aside class="dashboard-side">
-            <section class="metric-panel">
+            <button id="clientsMetricButton" class="metric-panel metric-button" type="button">
               <span id="clientMetric">0</span>
               <strong>Clients</strong>
-            </section>
-            <section class="metric-panel">
+              <small>View all and add new</small>
+            </button>
+            <button id="podsMetricButton" class="metric-panel metric-button" type="button">
               <span id="podMetric">0</span>
               <strong>Pods</strong>
-            </section>
+              <small>View all and add new</small>
+            </button>
             <section class="history-panel">
               <h2>Recent Runs</h2>
               <div id="historyList" class="history-list"></div>
@@ -296,6 +298,36 @@
         <menu>
           <button id="cancelClient" type="button" class="secondary-button">Cancel</button>
           <button type="submit" class="primary-button">Save Client</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="clientsListDialog">
+      <form method="dialog" class="settings-form">
+        <div class="dialog-heading">
+          <h2>All Clients</h2>
+          <button id="addClientFromList" class="primary-button" type="button">Add Client</button>
+        </div>
+        <div id="allClientsList" class="management-list"></div>
+        <menu>
+          <button value="cancel" class="secondary-button">Close</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="podsDialog">
+      <form id="podForm" class="settings-form">
+        <div class="dialog-heading">
+          <h2>Pods</h2>
+        </div>
+        <div id="allPodsList" class="management-list"></div>
+        <label>
+          Add Pod
+          <input id="newPodName" placeholder="Pod 6, Enterprise, Local..." />
+        </label>
+        <menu>
+          <button id="cancelPodDialog" type="button" class="secondary-button">Close</button>
+          <button type="submit" class="primary-button">Add Pod</button>
         </menu>
       </form>
     </dialog>

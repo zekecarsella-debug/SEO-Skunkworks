@@ -10,6 +10,7 @@ const state = {
   exportSheets: null,
   columns: [],
   history: JSON.parse(localStorage.getItem("seo-mvp-history") || "[]"),
+  savedPods: JSON.parse(localStorage.getItem("seo-mvp-pods") || "[]"),
   user: JSON.parse(localStorage.getItem("seo-mvp-user") || "null") || null
 };
 
@@ -27,6 +28,12 @@ const podFilter = document.querySelector("#podFilter");
 const podOptions = document.querySelector("#podOptions");
 const clientMetric = document.querySelector("#clientMetric");
 const podMetric = document.querySelector("#podMetric");
+const clientsListDialog = document.querySelector("#clientsListDialog");
+const podsDialog = document.querySelector("#podsDialog");
+const allClientsList = document.querySelector("#allClientsList");
+const allPodsList = document.querySelector("#allPodsList");
+const podForm = document.querySelector("#podForm");
+const newPodName = document.querySelector("#newPodName");
 const historyList = document.querySelector("#historyList");
 const clientPageTitle = document.querySelector("#clientPageTitle");
 const clientDetailSummary = document.querySelector("#clientDetailSummary");
@@ -107,6 +114,19 @@ document.querySelector("#googleLoginButton").addEventListener("click", () => {
 document.querySelector("#backToDashboard").addEventListener("click", () => showView("dashboard"));
 document.querySelector("#backToClient").addEventListener("click", () => showView(activeClient() ? "client" : "dashboard"));
 document.querySelector("#addClientDashboard").addEventListener("click", () => openClientDialog(null));
+document.querySelector("#addClientFromList").addEventListener("click", () => {
+  clientsListDialog.close();
+  openClientDialog(null);
+});
+document.querySelector("#clientsMetricButton").addEventListener("click", () => {
+  renderClientsManagementList();
+  clientsListDialog.showModal();
+});
+document.querySelector("#podsMetricButton").addEventListener("click", () => {
+  renderPodsManagementList();
+  podsDialog.showModal();
+});
+document.querySelector("#cancelPodDialog").addEventListener("click", () => podsDialog.close());
 document.querySelector("#editClientButton").addEventListener("click", () => openClientDialog(activeClient()));
 document.querySelector("#cancelClient").addEventListener("click", () => clientDialog.close());
 
@@ -115,7 +135,9 @@ podFilter.addEventListener("change", renderDashboard);
 keywordWorkflow.addEventListener("change", updateUploadLabels);
 
 function pods() {
-  return [...new Set(state.clients.map(client => client.pod || "Unassigned"))].sort((a, b) => a.localeCompare(b));
+  return [...new Set([...state.savedPods, ...state.clients.map(client => client.pod || "Unassigned")])]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function renderDashboard() {
@@ -157,6 +179,72 @@ function renderDashboard() {
     </button>
   `).join("");
 }
+
+function renderClientsManagementList() {
+  if (!state.clients.length) {
+    allClientsList.innerHTML = `<div class="empty-state">No clients saved yet.</div>`;
+    return;
+  }
+  allClientsList.innerHTML = state.clients.map(client => `
+    <button class="management-item" type="button" data-client-id="${escapeAttr(client.id)}">
+      <div>
+        <strong>${escapeHtml(client.name || "Unnamed client")}</strong>
+        <span>${escapeHtml([client.domain, client.pod || "Unassigned", cmsLabel(client.cmsPlatform)].filter(Boolean).join(" - "))}</span>
+      </div>
+      <span class="pod-pill">Open</span>
+    </button>
+  `).join("");
+}
+
+function renderPodsManagementList() {
+  const allPods = pods();
+  if (!allPods.length) {
+    allPodsList.innerHTML = `<div class="empty-state">No Pods saved yet.</div>`;
+    return;
+  }
+  allPodsList.innerHTML = allPods.map(pod => {
+    const count = state.clients.filter(client => (client.pod || "Unassigned") === pod).length;
+    return `
+      <button class="management-item" type="button" data-pod="${escapeAttr(pod)}">
+        <div>
+          <strong>${escapeHtml(pod)}</strong>
+          <span>${count} client${count === 1 ? "" : "s"}</span>
+        </div>
+        <span class="pod-pill">Filter</span>
+      </button>
+    `;
+  }).join("");
+}
+
+allClientsList.addEventListener("click", event => {
+  const item = event.target.closest("[data-client-id]");
+  if (!item) return;
+  clientsListDialog.close();
+  state.activeClientId = item.dataset.clientId;
+  showView("client");
+});
+
+allPodsList.addEventListener("click", event => {
+  const item = event.target.closest("[data-pod]");
+  if (!item) return;
+  podsDialog.close();
+  podFilter.value = item.dataset.pod;
+  showView("dashboard");
+});
+
+podForm.addEventListener("submit", event => {
+  event.preventDefault();
+  const pod = newPodName.value.trim();
+  if (!pod) return;
+  if (!state.savedPods.some(existing => existing.toLowerCase() === pod.toLowerCase())) {
+    state.savedPods.push(pod);
+    state.savedPods.sort((a, b) => a.localeCompare(b));
+    localStorage.setItem("seo-mvp-pods", JSON.stringify(state.savedPods));
+  }
+  newPodName.value = "";
+  renderDashboard();
+  renderPodsManagementList();
+});
 
 clientCards.addEventListener("click", event => {
   const card = event.target.closest("[data-client-id]");
@@ -235,6 +323,12 @@ function openClientDialog(client) {
   document.querySelector("#profileNotes").value = client?.notes || "";
   clientDialog.showModal();
 }
+
+document.querySelector("#profileLogo").addEventListener("change", event => {
+  const file = event.target.files?.[0];
+  if (!file || !file.type.startsWith("image/")) return;
+  suggestColorsFromLogo(file);
+});
 
 clientForm.addEventListener("submit", async event => {
   event.preventDefault();
@@ -570,6 +664,72 @@ function initials(text) {
 
 function toolInitial(title) {
   return String(title || "?").split(/\s+/).map(word => word[0]).join("").slice(0, 2).toUpperCase();
+}
+
+function suggestColorsFromLogo(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const image = new Image();
+    image.onload = () => {
+      const colors = dominantLogoColors(image);
+      if (colors[0]) document.querySelector("#profilePrimary").value = colors[0];
+      if (colors[1]) document.querySelector("#profileSecondary").value = colors[1];
+    };
+    image.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function dominantLogoColors(image) {
+  const canvas = document.createElement("canvas");
+  const size = 120;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(image, 0, 0, size, size);
+  const data = ctx.getImageData(0, 0, size, size).data;
+  const buckets = new Map();
+  for (let i = 0; i < data.length; i += 16) {
+    const alpha = data[i + 3];
+    if (alpha < 150) continue;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const saturation = max - min;
+    if (max > 242 || max < 28 || saturation < 28) continue;
+    const key = [r, g, b].map(value => Math.round(value / 24) * 24).join(",");
+    const existing = buckets.get(key) || { r: 0, g: 0, b: 0, count: 0, saturation: 0 };
+    existing.r += r;
+    existing.g += g;
+    existing.b += b;
+    existing.count += 1;
+    existing.saturation += saturation;
+    buckets.set(key, existing);
+  }
+  const ranked = [...buckets.values()]
+    .map(color => ({
+      r: Math.round(color.r / color.count),
+      g: Math.round(color.g / color.count),
+      b: Math.round(color.b / color.count),
+      score: color.count * 1.2 + color.saturation / color.count
+    }))
+    .sort((a, b) => b.score - a.score);
+  const selected = [];
+  for (const color of ranked) {
+    if (selected.every(existing => colorDistance(existing, color) > 90)) selected.push(color);
+    if (selected.length === 2) break;
+  }
+  return selected.map(rgbToHex);
+}
+
+function colorDistance(a, b) {
+  return Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
+}
+
+function rgbToHex({ r, g, b }) {
+  return `#${[r, g, b].map(value => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function escapeHtml(value) {
