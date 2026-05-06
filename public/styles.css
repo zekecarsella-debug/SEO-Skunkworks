@@ -227,6 +227,10 @@ button {
   gap: 12px;
 }
 
+.tool-launcher .section-heading {
+  margin-bottom: 20px;
+}
+
 .dashboard-controls {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) 220px;
@@ -396,14 +400,33 @@ textarea {
 
 .detail-list {
   display: grid;
-  gap: 10px;
+  gap: 14px;
   margin-top: 16px;
 }
 
-.detail-list a {
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.detail-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
   color: var(--primary);
+  padding: 8px 12px;
   font-weight: 800;
   text-decoration: none;
+}
+
+.detail-action:hover {
+  border-color: rgba(237, 28, 36, 0.45);
+  background: white;
 }
 
 .primary-button,

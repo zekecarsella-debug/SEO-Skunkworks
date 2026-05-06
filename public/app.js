@@ -177,10 +177,11 @@ function renderClientDetail() {
     return;
   }
   clientPageTitle.textContent = client.name || "Unnamed client";
-  const links = [
-    client.websiteUrl && `<a href="${escapeAttr(client.websiteUrl)}" target="_blank">Website</a>`,
-    client.campaignStrategyUrl && `<a href="${escapeAttr(client.campaignStrategyUrl)}" target="_blank">Campaign Strategy Template</a>`,
-    client.driveFolderUrl && `<a href="${escapeAttr(client.driveFolderUrl)}" target="_blank">Client Folder</a>`
+  const websiteUrl = client.websiteUrl || client.homepageUrl;
+  const actions = [
+    websiteUrl && `<a class="detail-action" href="${escapeAttr(websiteUrl)}" target="_blank">Website</a>`,
+    client.campaignStrategyUrl && `<a class="detail-action" href="${escapeAttr(client.campaignStrategyUrl)}" target="_blank">Campaign Strategy Template</a>`,
+    client.driveFolderUrl && `<a class="detail-action" href="${escapeAttr(client.driveFolderUrl)}" target="_blank">Client Folder</a>`
   ].filter(Boolean).join("");
   clientDetailSummary.innerHTML = `
     ${client.logo?.url ? `<img class="client-detail-logo" src="${escapeAttr(client.logo.url)}" alt="${escapeAttr(client.name)} logo" />` : ""}
@@ -188,8 +189,7 @@ function renderClientDetail() {
     <h2>${escapeHtml(client.name || "Unnamed client")}</h2>
     <p class="client-detail-text">${escapeHtml([client.domain, client.specialty, cmsLabel(client.cmsPlatform)].filter(Boolean).join(" - ") || "No domain, specialty, or CMS saved yet.")}</p>
     <div class="detail-list">
-      ${client.homepageUrl ? `<span><strong>Homepage:</strong> ${escapeHtml(client.homepageUrl)}</span>` : ""}
-      ${links ? `<span><strong>Links:</strong> ${links}</span>` : ""}
+      ${actions ? `<div class="detail-actions">${actions}</div>` : ""}
       ${client.assets?.length ? `<span><strong>Helpful files:</strong> ${client.assets.length}</span>` : ""}
       ${client.notes ? `<span><strong>Notes:</strong> ${escapeHtml(client.notes)}</span>` : ""}
     </div>
